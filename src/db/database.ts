@@ -166,6 +166,7 @@ export function deleteReminder(id: string): boolean {
   const db = getDb();
   const stmt = db.prepare('UPDATE reminders SET is_active = 0 WHERE id = ?');
   const result = stmt.run(id);
+  console.log(`[DB] Deleted reminder ${id}`);
   return result.changes > 0;
 }
 
