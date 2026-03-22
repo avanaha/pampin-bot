@@ -23,9 +23,7 @@ export class MaxApi {
     const url = `${this.baseUrl}${endpoint}`;
     
     console.log(`[MaxApi] ${method} ${endpoint}`);
-    if (body) {
-      console.log(`[MaxApi] Body:`, JSON.stringify(body));
-    }
+    console.log(`[MaxApi] Request body:`, JSON.stringify(body, null, 2));
     
     const headers: Record<string, string> = {
       'Authorization': this.token,
@@ -42,32 +40,31 @@ export class MaxApi {
     const responseText = await response.text();
     
     console.log(`[MaxApi] Status: ${response.status}`);
-    console.log(`[MaxApi] Response: ${responseText.substring(0, 200)}`);
+    console.log(`[MaxApi] Response: ${responseText}`);
 
     if (!response.ok) {
       let errorData: any = {};
       try { errorData = JSON.parse(responseText); } catch (e) {}
-      console.error(`[MaxApi] Error:`, errorData);
       throw new MaxApiError(errorData.code || String(response.status), errorData.message || 'API error');
     }
 
     return JSON.parse(responseText) as T;
   }
 
-  private async request<T>(method: string, endpoint: string, body?: unknown): Promise<T> {
-    return this.requestRaw<T>(method, endpoint, body);
-  }
-
   async getMe(): Promise<User> {
-    return this.request<User>('GET', '/me');
+    return this.requestRaw<User>('GET', '/me');
   }
 
-  // Отправка сообщения по user_id (для личных диалогов)
+  // Отправка по user_id
   async sendToUser(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
-    console.log(`[MaxApi] sendToUser userId=${userId}`);
+    console.log(`[MaxApi] === sendToUser userId=${userId} ===`);
+    
     const body: any = {
       user_id: userId,
-      body: { text, format: 'plain' }
+      body: {
+        text: text,
+        format: 'plain'
+      }
     };
     
     if (buttons?.length) {
@@ -80,12 +77,16 @@ export class MaxApi {
     return this.requestRaw('POST', '/messages', body);
   }
 
-  // Отправка сообщения по chat_id (для групповых чатов)
+  // Отправка по chat_id
   async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
-    console.log(`[MaxApi] sendToChat chatId=${chatId}`);
+    console.log(`[MaxApi] === sendToChat chatId=${chatId} ===`);
+    
     const body: any = {
       chat_id: chatId,
-      body: { text, format: 'plain' }
+      body: {
+        text: text,
+        format: 'plain'
+      }
     };
     
     if (buttons?.length) {
@@ -98,16 +99,20 @@ export class MaxApi {
     return this.requestRaw('POST', '/messages', body);
   }
 
-  async answerCallback(callbackId: string, text?: string): Promise<void> {
+  async answerCallback(callbackId: string, notificationText?: string): Promise<void> {
     console.log(`[MaxApi] answerCallback ${callbackId}`);
-    await this.request('POST', '/answers', {
+    await this.requestRaw('POST', '/answers', {
       callback_id: callbackId,
-      text: text || ''
+      notification: notificationText || ''
     });
   }
 
   async unsubscribeWebhook(): Promise<void> {
-    await this.request('DELETE', '/subscriptions');
+    try {
+      await this.requestRaw('DELETE', '/subscriptions');
+    } catch (e) {
+      // Игнорируем ошибку если webhook не был установлен
+    }
   }
 
   async getUpdates(marker?: number, types?: string[]): Promise<UpdatesResponse> {
@@ -117,16 +122,12 @@ export class MaxApi {
     if (marker !== undefined) params.append('marker', String(marker));
     if (types) params.append('types', types.join(','));
     
-    return this.request<UpdatesResponse>('GET', `/updates?${params.toString()}`);
+    return this.requestRaw<UpdatesResponse>('GET', `/updates?${params.toString()}`);
   }
 }
 
 export function callbackButton(text: string, payload: string): InlineKeyboardButton {
   return { type: 'callback', text, payload };
-}
-
-export function linkButton(text: string, url: string): InlineKeyboardButton {
-  return { type: 'link', text, url };
 }
 
 let maxApiInstance: MaxApi | null = null;
