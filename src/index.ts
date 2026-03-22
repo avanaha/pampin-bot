@@ -32,6 +32,14 @@ const scheduler = new ReminderScheduler(GROUP_ID);
 async function startLongPolling(): Promise<void> {
   console.log('🔄 Starting Long Polling...');
   
+  // Удаляем webhook чтобы работал long polling
+  try {
+    await api.unsubscribeWebhook();
+    console.log('✅ Webhook removed');
+  } catch (e) {
+    console.log('ℹ️ No webhook to remove');
+  }
+  
   let marker: number | null = null;
   let pollCount = 0;
   let isPolling = false;
@@ -68,7 +76,7 @@ async function startLongPolling(): Promise<void> {
       }
       
       for (const update of updates) {
-        console.log(`[Update] type=${update.update_type}`);
+        console.log(`[Update] type=${update.update_type}`, JSON.stringify(update).substring(0, 200));
         try {
           await bot.processUpdate(update);
         } catch (error) {
