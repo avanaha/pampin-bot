@@ -22,7 +22,7 @@ export class MaxApi {
   async requestRaw<T>(method: string, endpoint: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     
-    console.log(`[MaxApi] ${method} ${endpoint}`);
+    console.log(`[MaxApi] ${method} ${url}`);
     console.log(`[MaxApi] Body:`, body ? JSON.stringify(body) : 'none');
     
     const headers: Record<string, string> = {
@@ -55,25 +55,42 @@ export class MaxApi {
     return this.requestRaw<User>('GET', '/me');
   }
 
-  async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
-    console.log(`[MaxApi] sendToChat chatId=${chatId}`);
+  // Отправка пользователю - user_id в QUERY!
+  async sendToUser(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
+    console.log(`[MaxApi] sendToUser userId=${userId}`);
     
     const body: any = {
-      chat_id: chatId,
-      body: {
-        text: text,
-        format: 'plain'
-      }
+      text: text
     };
     
     if (buttons?.length) {
-      body.body.attachments = [{
+      body.attachments = [{
         type: 'inline_keyboard',
         payload: { buttons }
       }];
     }
     
-    return this.requestRaw('POST', '/messages', body);
+    // user_id в query параметрах!
+    return this.requestRaw('POST', `/messages?user_id=${userId}`, body);
+  }
+
+  // Отправка в чат - chat_id в QUERY!
+  async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
+    console.log(`[MaxApi] sendToChat chatId=${chatId}`);
+    
+    const body: any = {
+      text: text
+    };
+    
+    if (buttons?.length) {
+      body.attachments = [{
+        type: 'inline_keyboard',
+        payload: { buttons }
+      }];
+    }
+    
+    // chat_id в query параметрах!
+    return this.requestRaw('POST', `/messages?chat_id=${chatId}`, body);
   }
 
   async answerCallback(callbackId: string, notificationText?: string): Promise<void> {
