@@ -23,6 +23,9 @@ export class MaxApi {
     const url = `${this.baseUrl}${endpoint}`;
     
     console.log(`[MaxApi] ${method} ${endpoint}`);
+    if (body) {
+      console.log(`[MaxApi] Body:`, JSON.stringify(body));
+    }
     
     const headers: Record<string, string> = {
       'Authorization': this.token,
@@ -39,7 +42,7 @@ export class MaxApi {
     const responseText = await response.text();
     
     console.log(`[MaxApi] Status: ${response.status}`);
-    console.log(`[MaxApi] Body: ${responseText.substring(0, 200)}`);
+    console.log(`[MaxApi] Response: ${responseText.substring(0, 200)}`);
 
     if (!response.ok) {
       let errorData: any = {};
@@ -59,32 +62,40 @@ export class MaxApi {
     return this.request<User>('GET', '/me');
   }
 
-  async sendText(chatId: number, text: string, format: 'plain' | 'markdown' | 'html' = 'plain'): Promise<any> {
-    console.log(`[MaxApi] sendText to ${chatId}`);
-    return this.request('POST', '/messages', {
-      chat_id: chatId,
-      body: { text, format }
-    });
+  // Отправка сообщения по user_id (для личных диалогов)
+  async sendToUser(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
+    console.log(`[MaxApi] sendToUser userId=${userId}`);
+    const body: any = {
+      user_id: userId,
+      body: { text, format: 'plain' }
+    };
+    
+    if (buttons?.length) {
+      body.body.attachments = [{
+        type: 'inline_keyboard',
+        payload: { buttons }
+      }];
+    }
+    
+    return this.requestRaw('POST', '/messages', body);
   }
 
-  async sendMessageWithKeyboard(
-    chatId: number, 
-    text: string, 
-    buttons: InlineKeyboardButton[][], 
-    format: 'plain' | 'markdown' | 'html' = 'plain'
-  ): Promise<any> {
-    console.log(`[MaxApi] sendWithKeyboard to ${chatId}`);
-    return this.request('POST', '/messages', {
+  // Отправка сообщения по chat_id (для групповых чатов)
+  async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
+    console.log(`[MaxApi] sendToChat chatId=${chatId}`);
+    const body: any = {
       chat_id: chatId,
-      body: {
-        text,
-        format,
-        attachments: [{
-          type: 'inline_keyboard',
-          payload: { buttons }
-        }]
-      }
-    });
+      body: { text, format: 'plain' }
+    };
+    
+    if (buttons?.length) {
+      body.body.attachments = [{
+        type: 'inline_keyboard',
+        payload: { buttons }
+      }];
+    }
+    
+    return this.requestRaw('POST', '/messages', body);
   }
 
   async answerCallback(callbackId: string, text?: string): Promise<void> {
@@ -93,10 +104,6 @@ export class MaxApi {
       callback_id: callbackId,
       text: text || ''
     });
-  }
-
-  async subscribeWebhook(url: string, types?: string[]): Promise<any> {
-    return this.request('POST', '/subscriptions', { url, types });
   }
 
   async unsubscribeWebhook(): Promise<void> {
