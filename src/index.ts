@@ -8,13 +8,9 @@ import { UpdatesResponse } from './types/max-api';
 const BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const GROUP_ID = parseInt(process.env.GROUP_ID || '0');
 const DATABASE_PATH = process.env.DATABASE_PATH || './data/pampin.db';
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const PORT = parseInt(process.env.PORT || '3000');
-const NODE_ENV = process.env.NODE_ENV || 'development';
 
 console.log('='.repeat(50));
 console.log('🤖 PamPin Bot');
-console.log(`   NODE_ENV: ${NODE_ENV}`);
 console.log(`   GROUP_ID: ${GROUP_ID}`);
 console.log(`   DATABASE: ${DATABASE_PATH}`);
 console.log(`   TOKEN: ${BOT_TOKEN ? '✅' : '❌'}`);
@@ -32,7 +28,7 @@ const scheduler = new ReminderScheduler(GROUP_ID);
 async function startLongPolling(): Promise<void> {
   console.log('🔄 Starting Long Polling...');
   
-  // Удаляем webhook чтобы работал long polling
+  // Удаляем webhook
   try {
     await api.unsubscribeWebhook();
     console.log('✅ Webhook removed');
@@ -76,7 +72,7 @@ async function startLongPolling(): Promise<void> {
       }
       
       for (const update of updates) {
-        console.log(`[Update] type=${update.update_type}`, JSON.stringify(update).substring(0, 200));
+        console.log(`[Update] type=${update.update_type}`);
         try {
           await bot.processUpdate(update);
         } catch (error) {
@@ -103,7 +99,7 @@ async function main(): Promise<void> {
   console.log('🔍 Checking bot...');
   try {
     const me = await api.getMe();
-    console.log(`✅ Bot: ${me.name} (@${me.username})`);
+    console.log(`✅ Bot: ${me.name}`);
   } catch (error) {
     console.error('❌ Bot check failed:', error);
     process.exit(1);
