@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { getAllActiveReminders } from '../db/database';
 import { formatDate, formatPeriod } from '../utils/dateUtils';
 import { Reminder } from '../types';
-import { getMaxApi } from '../bot/maxApi';  // ИСПРАВЛЕНО: '../bot/maxApi' вместо './maxApi'
+import { getMaxApi } from '../bot/maxApi';
 
 export class ReminderScheduler {
   private cronJob: cron.ScheduledTask | null = null;
@@ -58,8 +58,9 @@ export class ReminderScheduler {
       const api = getMaxApi();
       const text = `🔔 Напоминание!\n\n📌 ${reminder.title}\n📅 ${formatDate(eventDate, 'full')}\n\n⏰ Напоминаю ${formatPeriod(periodMs)}`;
       
-      await api.sendText(reminder.chat_id, text, 'plain');
-      console.log(`[Scheduler] Reminder sent to chat ${reminder.chat_id}`);
+      // Отправляем пользователю по user_id
+      await api.sendToUser(reminder.user_id, text);
+      console.log(`[Scheduler] Reminder sent to user ${reminder.user_id}`);
     } catch (error) {
       console.error('[Scheduler] Failed to send reminder:', error);
     }
