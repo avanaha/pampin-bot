@@ -55,7 +55,6 @@ export class MaxApi {
     return this.requestRaw<User>('GET', '/me');
   }
 
-  // Попробуем разные форматы
   async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
     console.log(`[MaxApi] sendToChat chatId=${chatId}`);
     
