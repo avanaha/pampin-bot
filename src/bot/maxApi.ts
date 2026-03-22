@@ -23,7 +23,7 @@ export class MaxApi {
     const url = `${this.baseUrl}${endpoint}`;
     
     console.log(`[MaxApi] ${method} ${endpoint}`);
-    console.log(`[MaxApi] Request body:`, JSON.stringify(body, null, 2));
+    console.log(`[MaxApi] Body:`, body ? JSON.stringify(body) : 'none');
     
     const headers: Record<string, string> = {
       'Authorization': this.token,
@@ -40,7 +40,7 @@ export class MaxApi {
     const responseText = await response.text();
     
     console.log(`[MaxApi] Status: ${response.status}`);
-    console.log(`[MaxApi] Response: ${responseText}`);
+    console.log(`[MaxApi] Response: ${responseText.substring(0, 200)}`);
 
     if (!response.ok) {
       let errorData: any = {};
@@ -55,31 +55,9 @@ export class MaxApi {
     return this.requestRaw<User>('GET', '/me');
   }
 
-  // Отправка по user_id
-  async sendToUser(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
-    console.log(`[MaxApi] === sendToUser userId=${userId} ===`);
-    
-    const body: any = {
-      user_id: userId,
-      body: {
-        text: text,
-        format: 'plain'
-      }
-    };
-    
-    if (buttons?.length) {
-      body.body.attachments = [{
-        type: 'inline_keyboard',
-        payload: { buttons }
-      }];
-    }
-    
-    return this.requestRaw('POST', '/messages', body);
-  }
-
-  // Отправка по chat_id
+  // Попробуем разные форматы
   async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
-    console.log(`[MaxApi] === sendToChat chatId=${chatId} ===`);
+    console.log(`[MaxApi] sendToChat chatId=${chatId}`);
     
     const body: any = {
       chat_id: chatId,
@@ -110,9 +88,7 @@ export class MaxApi {
   async unsubscribeWebhook(): Promise<void> {
     try {
       await this.requestRaw('DELETE', '/subscriptions');
-    } catch (e) {
-      // Игнорируем ошибку если webhook не был установлен
-    }
+    } catch (e) {}
   }
 
   async getUpdates(marker?: number, types?: string[]): Promise<UpdatesResponse> {
