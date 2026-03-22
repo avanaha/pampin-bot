@@ -58,9 +58,9 @@ export class ReminderScheduler {
       const api = getMaxApi();
       const text = `🔔 Напоминание!\n\n📌 ${reminder.title}\n📅 ${formatDate(eventDate, 'full')}\n\n⏰ Напоминаю ${formatPeriod(periodMs)}`;
       
-      // Отправляем пользователю по user_id
-      await api.sendToUser(reminder.user_id, text);
-      console.log(`[Scheduler] Reminder sent to user ${reminder.user_id}`);
+      // Отправляем по chat_id
+      await api.sendToChat(reminder.chat_id, text);
+      console.log(`[Scheduler] Reminder sent to chat ${reminder.chat_id}`);
     } catch (error) {
       console.error('[Scheduler] Failed to send reminder:', error);
     }
