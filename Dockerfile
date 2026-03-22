@@ -9,7 +9,7 @@ RUN apk add --no-cache python3 make g++ sqlite
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm install --production
 
 # Copy source files
 COPY . .
