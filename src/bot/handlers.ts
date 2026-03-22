@@ -29,40 +29,182 @@ export class PamPinBot {
       } else if (update.update_type === 'message_callback' && update.message_callback) {
         await this.onCallback(update.message_callback);
       } else if (update.update_type === 'bot_started') {
-        // При запуске бота отправляем в группу
-        await this.sendToGroup('👋 Бот PamPin запущен!');
+        // bot_started - отправляем пользователю по user_id
+        const userId = update.user?.user_id;
+        if (userId) {
+          await this.sendMenu(userId);
+        }
       }
     } catch (e) {
       console.error('[Bot] Error:', e);
     }
   }
 
-  // Отправка в ГРУППУ
+  // Отправка пользователю
+  private async send(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<void> {
+    console.log(`[Bot] send to userId=${userId}`);
+    try {
+      await this.api.sendToUser(userId, text, buttons);
+      console.log(`[Bot] Sent OK`);
+    } catch (e) {
+      console.error(`[Bot] Send FAILED:`, e);
+    }
+  }
+
+  // Отправка в группу
   async sendToGroup(text: string): Promise<void> {
-    console.log(`[Bot] Sending to GROUP ${this.groupId}`);
+    console.log(`[Bot] sendToGroup ${this.groupId}`);
     try {
       await this.api.sendToChat(this.groupId, text);
-      console.log(`[Bot] ✅ Sent to group OK`);
+      console.log(`[Bot] Sent to group OK`);
     } catch (e) {
-      console.error(`[Bot] ❌ Send to group FAILED:`, e);
+      console.error(`[Bot] Send to group FAILED:`, e);
     }
+  }
+
+  private async sendMenu(userId: number): Promise<void> {
+    await this.send(userId, '👋 PamPin\n\n/add - добавить напоминание\n/list - список', [
+      [callbackButton('➕ Добавить', 'add')],
+      [callbackButton('📋 Список', 'list')]
+    ]);
   }
 
   private async onMessage(msg: Message): Promise<void> {
     const userId = msg.sender?.user_id;
-    const chatId = msg.recipient?.chat_id;
     const text = msg.body?.text;
 
-    console.log(`[Bot] Msg from userId=${userId} in chatId=${chatId}: "${text}"`);
+    console.log(`[Bot] Msg: userId=${userId} text="${text?.substring(0, 30)}"`);
 
     if (!text || !userId) return;
 
-    // ЛЮБОЕ сообщение отправляем в ГРУППУ
-    await this.sendToGroup(`📩 Сообщение от пользователя ${userId}:\n"${text}"`);
+    // Используем userId для сессии
+    const sessionId = userId;
+
+    if (text === '/start') { 
+      await this.sendMenu(userId); 
+      return; 
+    }
+    if (text === '/list') { 
+      await this.showList(userId, sessionId); 
+      return; 
+    }
+    if (text === '/add') { 
+      await this.startAdd(userId, sessionId); 
+      return; 
+    }
+
+    const sess = getUserSession(userId, sessionId);
+
+    if (sess.state === 'title') {
+      await this.setTitle(userId, sessionId, text, sess);
+    } else if (sess.state === 'date') {
+      await this.setDate(userId, sessionId, text, sess);
+    } else if (sess.state === 'time') {
+      await this.setTime(userId, sessionId, text, sess);
+    } else {
+      await this.sendMenu(userId);
+    }
   }
 
   private async onCallback(cb: MessageCallback): Promise<void> {
-    console.log(`[Bot] Callback: ${cb.payload}`);
+    const userId = cb.user?.user_id;
+    const payload = cb.payload;
+
+    console.log(`[Bot] Callback: ${payload} userId=${userId}`);
+
+    if (!userId) return;
+
     try { await this.api.answerCallback(cb.callback_id); } catch {}
+
+    const sessionId = userId;
+
+    if (payload === 'add') await this.startAdd(userId, sessionId);
+    else if (payload === 'list') await this.showList(userId, sessionId);
+    else if (payload === 'cancel') { 
+      clearUserSession(userId, sessionId); 
+      await this.sendMenu(userId); 
+    }
+    else if (payload === 'confirm') await this.doCreate(userId, sessionId);
+    else if (payload.startsWith('del:')) { 
+      deleteReminder(payload.split(':')[1]); 
+      await this.send(userId, '✅ Удалено'); 
+    }
+  }
+
+  private async startAdd(userId: number, sessionId: number): Promise<void> {
+    updateUserSession(userId, sessionId, { state: 'title', data: {} });
+    await this.send(userId, '📝 Введите название:', [[callbackButton('❌ Отмена', 'cancel')]]);
+  }
+
+  private async setTitle(userId: number, sessionId: number, text: string, sess: any): Promise<void> {
+    if (text.length < 2) { await this.send(userId, 'Слишком коротко. Введите название:'); return; }
+    updateUserSession(userId, sessionId, { state: 'date', data: { ...sess.data, title: text } });
+    await this.send(userId, `✅ ${text}\n\n📅 Введите дату (например: 25.12.2025):`, [[callbackButton('❌ Отмена', 'cancel')]]);
+  }
+
+  private async setDate(userId: number, sessionId: number, text: string, sess: any): Promise<void> {
+    const date = parseDate(text, 'Europe/Moscow');
+    if (!date) { await this.send(userId, 'Не понял дату. Напишите: 25.12.2025'); return; }
+    updateUserSession(userId, sessionId, { state: 'time', data: { ...sess.data, date: toISODateString(date) } });
+    await this.send(userId, `✅ ${formatDate(date, 'long')}\n\n🕐 Введите время (например: 14:30) или "нет":`, [[callbackButton('❌ Отмена', 'cancel')]]);
+  }
+
+  private async setTime(userId: number, sessionId: number, text: string, sess: any): Promise<void> {
+    let time = '';
+    if (text.toLowerCase() !== 'нет' && text.toLowerCase() !== 'skip') {
+      const parsed = parseTime(text);
+      if (!parsed) { await this.send(userId, 'Не понял время. Напишите: 14:30 или "нет"'); return; }
+      time = `${parsed.hours.toString().padStart(2,'0')}:${parsed.minutes.toString().padStart(2,'0')}`;
+    }
+    
+    updateUserSession(userId, sessionId, { state: 'idle', data: { ...sess.data, time } });
+    
+    const d = sess.data;
+    await this.send(userId, `📋 Проверка:\n\n📌 ${d.title}\n📅 ${formatDate(new Date(d.date), 'long')}${time ? ` в ${time}` : ''}\n\nСоздать?`, [
+      [callbackButton('✅ Создать', 'confirm')],
+      [callbackButton('❌ Отмена', 'cancel')]
+    ]);
+  }
+
+  private async doCreate(userId: number, sessionId: number): Promise<void> {
+    const sess = getUserSession(userId, sessionId);
+    const d = sess.data;
+
+    if (!d.title || !d.date) { await this.send(userId, 'Ошибка создания'); return; }
+
+    createReminder({
+      user_id: userId, 
+      chat_id: sessionId, 
+      title: d.title, 
+      event_date: d.date, 
+      event_time: d.time,
+      timezone: 'Europe/Moscow', 
+      reminder_periods: [86400000], 
+      repeat_yearly: false, 
+      is_active: true
+    });
+
+    clearUserSession(userId, sessionId);
+    await this.send(userId, `✅ "${d.title}" создано!`, [
+      [callbackButton('📋 Список', 'list')], 
+      [callbackButton('➕ Ещё', 'add')]
+    ]);
+  }
+
+  private async showList(userId: number, sessionId: number): Promise<void> {
+    const list = getRemindersByUser(userId, sessionId);
+    if (!list.length) { 
+      await this.send(userId, '📭 Напоминаний нет', [[callbackButton('➕ Создать', 'add')]]); 
+      return; 
+    }
+
+    let txt = '📋 Ваши напоминания:\n\n';
+    list.slice(0, 5).forEach((r, i) => { 
+      txt += `${i + 1}. ${r.title}\n   📅 ${formatDate(new Date(r.event_date), 'short')}\n`; 
+    });
+
+    const btns: InlineKeyboardButton[][] = list.slice(0, 5).map(r => [callbackButton(`🗑 ${r.title}`, `del:${r.id}`)]);
+    btns.push([callbackButton('➕ Добавить', 'add')]);
+    await this.send(userId, txt, btns);
   }
 }
