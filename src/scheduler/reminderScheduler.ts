@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { getAllActiveReminders } from '../db/database';
 import { formatDate, formatPeriod } from '../utils/dateUtils';
 import { Reminder } from '../types';
-import { getMaxApi } from './maxApi';
+import { getMaxApi } from '../bot/maxApi';  // ИСПРАВЛЕНО: '../bot/maxApi' вместо './maxApi'
 
 export class ReminderScheduler {
   private cronJob: cron.ScheduledTask | null = null;
