@@ -10,6 +10,21 @@ import {
 } from '../db/database';
 import { parseDate, parseTime, formatDate, toISODateString } from '../utils/dateUtils';
 
+// Тип для callback от MAX API
+interface MaxCallback {
+  callback_id: string;
+  user: {
+    user_id: number;
+    first_name?: string;
+    last_name?: string;
+    name?: string;
+    is_bot: boolean;
+    last_activity_time: number;
+  };
+  payload: string;
+  timestamp?: number;
+}
+
 export class PamPinBot {
   private api: MaxApi;
   private groupId: number;
@@ -21,13 +36,17 @@ export class PamPinBot {
   }
 
   async processUpdate(update: Update): Promise<void> {
-    console.log(`[Bot] Update: ${update.update_type}`, JSON.stringify(update).substring(0, 500));
+    console.log(`[Bot] Update: ${update.update_type}`);
     
     try {
       if (update.update_type === 'message_created' && update.message) {
         await this.onMessage(update.message);
-      } else if (update.update_type === 'message_callback' && update.message_callback) {
-        await this.onCallback(update.message_callback);
+      } else if (update.update_type === 'message_callback') {
+        // Callback может быть в message_callback ИЛИ в callback
+        const cb = (update as any).message_callback || (update as any).callback;
+        if (cb) {
+          await this.onCallback(cb);
+        }
       } else if (update.update_type === 'bot_started') {
         const userId = update.user?.user_id;
         console.log(`[Bot] bot_started userId=${userId}`);
@@ -104,7 +123,7 @@ export class PamPinBot {
     }
   }
 
-  private async onCallback(cb: MessageCallback): Promise<void> {
+  private async onCallback(cb: MaxCallback): Promise<void> {
     const userId = cb.user?.user_id;
     const payload = cb.payload;
 
@@ -112,7 +131,6 @@ export class PamPinBot {
     console.log(`[Bot] payload: "${payload}"`);
     console.log(`[Bot] userId: ${userId}`);
     console.log(`[Bot] callback_id: ${cb.callback_id}`);
-    console.log(`[Bot] Full callback:`, JSON.stringify(cb).substring(0, 300));
 
     if (!userId) {
       console.log(`[Bot] No userId in callback, skipping`);
@@ -186,7 +204,7 @@ export class PamPinBot {
 
   private async setTime(userId: number, sessionId: number, text: string, sess: any): Promise<void> {
     let time = '';
-    if (text.toLowerCase() !== 'нет' && text.toLowerCase() !== 'skip' && text.toLowerCase() !== 'нет') {
+    if (text.toLowerCase() !== 'нет' && text.toLowerCase() !== 'skip') {
       const parsed = parseTime(text);
       if (!parsed) { 
         await this.send(userId, 'Не понял время. Напишите: 14:30 или "нет"'); 
@@ -223,14 +241,13 @@ export class PamPinBot {
       event_date: d.date, 
       event_time: d.time,
       timezone: 'Europe/Moscow', 
-      reminder_periods: [86400000], // за 1 день
+      reminder_periods: [86400000],
       repeat_yearly: false, 
       is_active: true
     });
 
     clearUserSession(userId, sessionId);
     
-    // Отправляем уведомление в группу
     await this.sendToGroup(`🆕 Создано новое напоминание:\n📌 ${d.title}\n📅 ${formatDate(new Date(d.date), 'long')}`);
     
     await this.send(userId, `✅ Напоминание "${d.title}" создано!`, [
