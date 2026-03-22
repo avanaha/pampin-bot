@@ -40,7 +40,7 @@ export class MaxApi {
     const responseText = await response.text();
     
     console.log(`[MaxApi] Status: ${response.status}`);
-    console.log(`[MaxApi] Response: ${responseText.substring(0, 300)}`);
+    console.log(`[MaxApi] Response: ${responseText.substring(0, 200)}`);
 
     if (!response.ok) {
       let errorData: any = {};
@@ -55,6 +55,7 @@ export class MaxApi {
     return this.requestRaw<User>('GET', '/me');
   }
 
+  // Отправка пользователю - user_id в QUERY!
   async sendToUser(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
     console.log(`[MaxApi] sendToUser userId=${userId}`);
     
@@ -69,9 +70,11 @@ export class MaxApi {
       }];
     }
     
+    // user_id в query параметрах!
     return this.requestRaw('POST', `/messages?user_id=${userId}`, body);
   }
 
+  // Отправка в чат - chat_id в QUERY!
   async sendToChat(chatId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<any> {
     console.log(`[MaxApi] sendToChat chatId=${chatId}`);
     
@@ -86,6 +89,7 @@ export class MaxApi {
       }];
     }
     
+    // chat_id в query параметрах!
     return this.requestRaw('POST', `/messages?chat_id=${chatId}`, body);
   }
 
