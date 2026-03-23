@@ -14,6 +14,7 @@ export interface Reminder {
   created_at: Date;
   updated_at: Date;
   is_active: boolean;
+  is_archived: boolean;
 }
 
 export interface UserSettings {
@@ -24,22 +25,27 @@ export interface UserSettings {
   updated_at: Date;
 }
 
+export type SessionState = 'idle' | 'title' | 'date' | 'time' | 'period' | 'confirm' | 'edit_select' | 'edit_field';
+
 export interface UserSession {
   user_id: number;
   chat_id: number;
-  state: 'idle' | 'title' | 'date' | 'time' | 'period' | 'confirm';
+  state: SessionState;
   data: {
     title?: string;
     date?: string;
     time?: string;
     period?: number;
+    edit_id?: string;
+    edit_field?: string;
     description?: string;
     [key: string]: any;
   };
   last_activity: Date;
 }
 
-export const PREDEFINED_PERIODS: { value: number; label: string }[] = [
+// Периоды напоминания в миллисекундах
+export const REMINDER_PERIODS: { value: number; label: string }[] = [
   { value: 7776000000, label: 'за 3 месяца' },
   { value: 2592000000, label: 'за 1 месяц' },
   { value: 604800000, label: 'за 1 неделю' },
