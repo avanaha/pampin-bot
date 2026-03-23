@@ -106,22 +106,18 @@ export class PamPinBot {
     console.log(`[Bot] SESSION: state="${sess.state}" data=`, JSON.stringify(sess.data));
 
     // Обработка по состоянию
-    switch (sess.state) {
-      case 'title':
-        console.log(`[Bot] -> Processing as TITLE`);
-        await this.processTitle(userId, text, sess);
-        break;
-      case 'date':
-        console.log(`[Bot] -> Processing as DATE`);
-        await this.processDate(userId, text, sess);
-        break;
-      case 'time':
-        console.log(`[Bot] -> Processing as TIME`);
-        await this.processTime(userId, text, sess);
-        break;
-      default:
-        console.log(`[Bot] -> Unknown state, showing menu`);
-        await this.sendMenu(userId);
+    if (sess.state === 'title') {
+      console.log(`[Bot] -> Processing as TITLE`);
+      await this.processTitle(userId, text, sess);
+    } else if (sess.state === 'date') {
+      console.log(`[Bot] -> Processing as DATE`);
+      await this.processDate(userId, text, sess);
+    } else if (sess.state === 'time') {
+      console.log(`[Bot] -> Processing as TIME`);
+      await this.processTime(userId, text, sess);
+    } else {
+      console.log(`[Bot] -> Unknown state, showing menu`);
+      await this.sendMenu(userId);
     }
   }
 
@@ -259,12 +255,13 @@ export class PamPinBot {
     const newData = { ...d, period: periodMs };
     updateUserSession(userId, userId, { state: 'confirm', data: newData });
     
-    const dateStr = formatDate(new Date(d.date), 'long');
+    const dateStr = d.date ? formatDate(new Date(d.date), 'long') : 'дата не указана';
     const timeStr = d.time ? ` в ${d.time}` : '';
+    const titleStr = d.title || 'без названия';
     
     await this.send(userId, 
       `📋 Проверка:\n\n` +
-      `📌 ${d.title}\n` +
+      `📌 ${titleStr}\n` +
       `📅 ${dateStr}${timeStr}\n` +
       `⏰ Напомнить ${periodLabel}\n\n` +
       `Создать напоминание?`, 
