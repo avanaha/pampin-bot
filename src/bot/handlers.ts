@@ -1,23 +1,41 @@
-import { MaxApi, callbackButton } from './maxApi';
-import { Update, Message, MessageCallback, InlineKeyboardButton } from '../types/max-api';
+import { MaxApi, callbackButton, getMaxApi } from './maxApi';
+import { 
+  Update, 
+  Message, 
+  MessageCallback,
+  InlineKeyboardButton 
+} from '../types/max-api';
+import { 
+  Reminder, 
+  UserSession, 
+  PREDEFINED_PERIODS,
+  BotState 
+} from '../types';
 import {
+  getReminderById,
   getRemindersByUser,
   createReminder,
+  updateReminder,
   deleteReminder,
+  getUserSettings,
+  upsertUserSettings,
   getUserSession,
   updateUserSession,
   clearUserSession
 } from '../db/database';
-import { parseDate, parseTime, formatDate, toISODateString } from '../utils/dateUtils';
-
-// Периоды напоминания
-const REMINDER_PERIODS = [
-  { value: 7776000000, label: 'за 3 месяца' },
-  { value: 2592000000, label: 'за 1 месяц' },
-  { value: 604800000, label: 'за 1 неделю' },
-  { value: 86400000, label: 'за 1 день' },
-  { value: 3600000, label: 'за 1 час' },
-];
+import {
+  parseDate,
+  parseTime,
+  formatDate,
+  formatTime,
+  formatTimeRemaining,
+  formatPeriod,
+  isDateInPast,
+  SUPPORTED_TIMEZONES,
+  toISODateString,
+  getCurrentDateTimeInTimezone,
+  getTodayFormatted
+} from '../utils/dateUtils';
 
 export class PamPinBot {
   private api: MaxApi;
@@ -26,320 +44,917 @@ export class PamPinBot {
   constructor(token: string, groupId: number) {
     this.api = new MaxApi(token);
     this.groupId = groupId;
-    console.log(`[Bot] Ready, groupId=${groupId}`);
   }
 
+  /**
+   * Process incoming update
+   */
   async processUpdate(update: Update): Promise<void> {
-    console.log(`[Bot] ========== UPDATE: ${update.update_type} ==========`);
-    
     try {
-      if (update.update_type === 'message_created' && update.message) {
-        await this.onMessage(update.message);
-      } else if (update.update_type === 'message_callback' && update.message_callback) {
-        await this.onCallback(update.message_callback);
-      } else if (update.update_type === 'bot_started') {
-        const userId = update.user?.user_id;
-        console.log(`[Bot] bot_started userId=${userId}`);
-        if (userId) {
-          await this.sendMenu(userId);
-        }
+      if (update.message) {
+        await this.handleMessage(update.message);
+      } else if (update.message_callback) {
+        await this.handleCallback(update.message_callback);
+      } else if (update.bot_started) {
+        await this.handleBotStarted(update.bot_started.user, update.bot_started.chat_id);
       }
-    } catch (e) {
-      console.error('[Bot] Error:', e);
+    } catch (error) {
+      console.error('Error processing update:', error);
     }
   }
 
-  private async send(userId: number, text: string, buttons?: InlineKeyboardButton[][]): Promise<void> {
-    console.log(`[Bot] >>> SEND to userId=${userId}`);
-    try {
-      await this.api.sendToUser(userId, text, buttons);
-      console.log(`[Bot] <<< SENT OK`);
-    } catch (e) {
-      console.error(`[Bot] <<< SEND FAILED:`, e);
-    }
+  /**
+   * Get user's timezone from settings or session
+   */
+  private getUserTimezone(userId: number, chatId: number, sessionData?: UserSession['data']): string {
+    const settings = getUserSettings(userId, chatId);
+    return settings?.timezone || sessionData?.temp_timezone || 'Europe/Moscow';
   }
 
-  async sendToGroup(text: string): Promise<void> {
-    console.log(`[Bot] sendToGroup ${this.groupId}`);
-    try {
-      await this.api.sendToChat(this.groupId, text);
-      console.log(`[Bot] Sent to group OK`);
-    } catch (e) {
-      console.error(`[Bot] Send to group FAILED:`, e);
-    }
+  /**
+   * Handle bot started event
+   */
+  private async handleBotStarted(user: any, chatId: number): Promise<void> {
+    const welcomeText = `
+👋 *Добро пожаловать в PamPin!*
+
+📅 PamPin — твой календарь важных дат. Я напомню обо всём, что ты расскажешь.
+
+*Что я умею:*
+• Добавлять напоминания о важных датах
+• Напоминать за нужный период (за 3 месяца, за день, за час и т.д.)
+• Повторять напоминания ежегодно
+• Работать с разными часовыми поясами
+
+*Как создать напоминание:*
+1. Нажми "➕ Добавить напоминание"
+2. Введи название события
+3. Укажи дату и время
+4. Выбери периоды напоминаний
+
+*Команды:*
+/start — показать это сообщение
+/list — список ваших напоминаний
+/settings — настройки (часовой пояс)
+/help — справка
+`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('➕ Добавить напоминание', 'add_reminder')],
+      [callbackButton('📋 Мои напоминания', 'list_reminders')],
+      [callbackButton('⚙️ Настройки', 'settings')]
+    ];
+
+    await this.api.sendMessageWithKeyboard(chatId, welcomeText, buttons, 'markdown');
   }
 
-  private async sendMenu(userId: number): Promise<void> {
-    await this.send(userId, '👋 PamPin - бот-напоминалка\n\n/add - добавить напоминание\n/list - список', [
-      [callbackButton('➕ Добавить', 'add')],
-      [callbackButton('📋 Список', 'list')]
-    ]);
-  }
+  /**
+   * Handle incoming message
+   */
+  private async handleMessage(message: Message): Promise<void> {
+    const userId = message.sender.user_id;
+    const chatId = message.chat_id;
+    const text = message.text?.trim();
 
-  private async onMessage(msg: Message): Promise<void> {
-    const userId = msg.sender?.user_id;
-    const text = msg.body?.text;
+    if (!text) return;
 
-    console.log(`[Bot] MSG: userId=${userId} text="${text}"`);
+    // Get user session
+    const session = getUserSession(userId, chatId);
 
-    if (!text || !userId) {
-      console.log(`[Bot] Skipping - no text or userId`);
+    // Handle commands
+    if (text.startsWith('/')) {
+      await this.handleCommand(userId, chatId, text);
       return;
     }
 
-    // Команды
-    if (text === '/start') { 
-      await this.sendMenu(userId); 
-      return; 
-    }
-    if (text === '/list') { 
-      await this.showList(userId); 
-      return; 
-    }
-    if (text === '/add') { 
-      await this.startAdd(userId); 
-      return; 
-    }
-
-    // Получаем сессию
-    const sess = getUserSession(userId, userId);
-    console.log(`[Bot] SESSION: state="${sess.state}" data=`, JSON.stringify(sess.data));
-
-    // Обработка по состоянию
-    if (sess.state === 'title') {
-      console.log(`[Bot] -> Processing as TITLE`);
-      await this.processTitle(userId, text, sess);
-    } else if (sess.state === 'date') {
-      console.log(`[Bot] -> Processing as DATE`);
-      await this.processDate(userId, text, sess);
-    } else if (sess.state === 'time') {
-      console.log(`[Bot] -> Processing as TIME`);
-      await this.processTime(userId, text, sess);
-    } else {
-      console.log(`[Bot] -> Unknown state, showing menu`);
-      await this.sendMenu(userId);
+    // Handle state-based input
+    switch (session.state) {
+      case 'waiting_for_title':
+        await this.handleTitleInput(userId, chatId, text, session);
+        break;
+      case 'waiting_for_date':
+        await this.handleDateInput(userId, chatId, text, session);
+        break;
+      case 'waiting_for_time':
+        await this.handleTimeInput(userId, chatId, text, session);
+        break;
+      case 'waiting_for_description':
+        await this.handleDescriptionInput(userId, chatId, text, session);
+        break;
+      case 'waiting_for_timezone':
+        await this.handleTimezoneInput(userId, chatId, text, session);
+        break;
+      default:
+        // Unknown input in idle state
+        await this.showMainMenu(chatId);
     }
   }
 
-  private async onCallback(cb: MessageCallback): Promise<void> {
-    const userId = cb.user?.user_id;
-    const payload = cb.payload;
+  /**
+   * Handle command
+   */
+  private async handleCommand(userId: number, chatId: number, command: string): Promise<void> {
+    const cmd = command.toLowerCase().split(' ')[0];
 
-    console.log(`[Bot] CALLBACK: userId=${userId} payload="${payload}"`);
+    switch (cmd) {
+      case '/start':
+        await this.handleBotStarted({ user_id: userId }, chatId);
+        break;
+      case '/list':
+        await this.showRemindersList(userId, chatId);
+        break;
+      case '/settings':
+        await this.showSettings(userId, chatId);
+        break;
+      case '/help':
+        await this.showHelp(chatId);
+        break;
+      default:
+        await this.api.sendText(chatId, 'Неизвестная команда. Введите /help для справки.');
+    }
+  }
 
-    if (!userId) return;
+  /**
+   * Handle callback query
+   */
+  private async handleCallback(callback: MessageCallback): Promise<void> {
+    const userId = callback.user.user_id;
+    const chatId = callback.chat_id;
+    const payload = callback.payload;
 
-    // Отвечаем на callback
+    console.log(`[CALLBACK] User ${userId}, payload: ${payload}`);
+
+    // Answer callback to remove loading state
     try {
-      await this.api.answerCallback(cb.callback_id);
+      await this.api.answerCallback(callback.callback_id);
     } catch (e) {
-      console.error(`[Bot] answerCallback error:`, e);
+      console.error('Failed to answer callback:', e);
     }
 
-    // Обработка периодов напоминания (period:VALUE)
-    if (payload.startsWith('period:')) {
-      const periodValue = parseInt(payload.split(':')[1]);
-      await this.processPeriod(userId, periodValue);
-      return;
-    }
+    // Parse callback data
+    const [action, ...params] = payload.split(':');
 
-    // Обработка
-    if (payload === 'add') {
-      await this.startAdd(userId);
-    } else if (payload === 'list') {
-      await this.showList(userId);
-    } else if (payload === 'cancel') {
-      clearUserSession(userId, userId);
-      await this.sendMenu(userId);
-    } else if (payload === 'confirm') {
-      await this.doCreate(userId);
-    } else if (payload.startsWith('del:')) {
-      const id = payload.split(':')[1];
-      deleteReminder(id);
-      await this.send(userId, '✅ Напоминание удалено');
+    switch (action) {
+      case 'add_reminder':
+        await this.startAddReminder(userId, chatId);
+        break;
+      case 'list_reminders':
+        await this.showRemindersList(userId, chatId);
+        break;
+      case 'view_reminder':
+        await this.showReminderDetails(chatId, params[0]);
+        break;
+      case 'edit_reminder':
+        await this.startEditReminder(userId, chatId, params[0]);
+        break;
+      case 'delete_reminder':
+        await this.confirmDeleteReminder(chatId, params[0]);
+        break;
+      case 'confirm_delete':
+        await this.executeDeleteReminder(userId, chatId, params[0]);
+        break;
+      case 'cancel':
+        clearUserSession(userId, chatId);
+        await this.showMainMenu(chatId);
+        break;
+      case 'settings':
+        await this.showSettings(userId, chatId);
+        break;
+      case 'change_timezone':
+        await this.showTimezoneSelection(chatId);
+        break;
+      case 'set_timezone':
+        await this.setTimezone(userId, chatId, params[0]);
+        break;
+      case 'select_periods':
+        await this.showPeriodSelection(userId, chatId);
+        break;
+      case 'toggle_period':
+        await this.togglePeriod(userId, chatId, parseInt(params[0]));
+        break;
+      case 'confirm_periods':
+        await this.confirmPeriods(userId, chatId);
+        break;
+      case 'toggle_repeat':
+        await this.toggleRepeat(userId, chatId);
+        break;
+      case 'confirm_reminder':
+        await this.confirmReminder(userId, chatId);
+        break;
+      case 'main_menu':
+        await this.showMainMenu(chatId);
+        break;
+      case 'skip_time':
+        await this.skipTime(userId, chatId);
+        break;
+      case 'skip_description':
+        await this.skipDescription(userId, chatId);
+        break;
+      case 'set_next_year':
+        await this.setDateNextYear(userId, chatId, params[0]);
+        break;
+      case 'retry_date':
+        await this.retryDate(userId, chatId);
+        break;
+      case 'dismiss':
+        // Just acknowledge, no action needed
+        break;
     }
   }
 
-  // === СОЗДАНИЕ НАПОМИНАНИЯ ===
-
-  private async startAdd(userId: number): Promise<void> {
-    console.log(`[Bot] startAdd: setting state=title for userId=${userId}`);
+  /**
+   * Start add reminder flow
+   */
+  private async startAddReminder(userId: number, chatId: number): Promise<void> {
+    const timezone = this.getUserTimezone(userId, chatId);
+    const todayStr = getTodayFormatted(timezone);
     
-    updateUserSession(userId, userId, { 
-      state: 'title', 
-      data: {} 
+    updateUserSession(userId, chatId, { 
+      state: 'waiting_for_title',
+      data: { 
+        temp_periods: [86400000], // Default: 1 day
+        temp_timezone: timezone,
+        temp_repeat: false
+      }
     });
-    
-    await this.send(userId, '📝 Введите название напоминания:', [
-      [callbackButton('❌ Отмена', 'cancel')]
-    ]);
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `📝 *Создание напоминания*\n\nВведите название события:`,
+      [[callbackButton('❌ Отмена', 'cancel')]],
+      'markdown'
+    );
   }
 
-  private async processTitle(userId: number, text: string, sess: any): Promise<void> {
-    if (text.length < 2) {
-      await this.send(userId, 'Слишком коротко. Введите название:');
+  /**
+   * Handle title input
+   */
+  private async handleTitleInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    if (text.length < 2 || text.length > 200) {
+      await this.api.sendText(chatId, 'Название должно быть от 2 до 200 символов. Попробуйте ещё раз:');
       return;
     }
-    
-    console.log(`[Bot] processTitle: "${text}" -> setting state=date`);
-    
-    const newData = { ...sess.data, title: text };
-    updateUserSession(userId, userId, { state: 'date', data: newData });
-    
-    await this.send(userId, `✅ "${text}"\n\n📅 Введите дату события (например: 25.12.2025):`, [
-      [callbackButton('❌ Отмена', 'cancel')]
-    ]);
+
+    const timezone = this.getUserTimezone(userId, chatId, session.data);
+    const todayStr = getTodayFormatted(timezone);
+
+    updateUserSession(userId, chatId, {
+      state: 'waiting_for_date',
+      data: { ...session.data, temp_title: text }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `✅ Название: *${text}*\n\n📅 Теперь введите дату события:\n\n_Формат: DD/MM/YYYY_\n_Например: ${todayStr}_`,
+      [[callbackButton('❌ Отмена', 'cancel')]],
+      'markdown'
+    );
   }
 
-  private async processDate(userId: number, text: string, sess: any): Promise<void> {
-    const date = parseDate(text, 'Europe/Moscow');
+  /**
+   * Handle date input
+   */
+  private async handleDateInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    const timezone = this.getUserTimezone(userId, chatId, session.data);
+    
+    const date = parseDate(text, timezone);
     
     if (!date) {
-      await this.send(userId, '❌ Не понял дату. Напишите: 25.12.2025');
+      const todayStr = getTodayFormatted(timezone);
+      await this.api.sendText(chatId, `Не удалось распознать дату. Попробуйте ещё раз.\n\nФормат: DD/MM/YYYY\nНапример: ${todayStr}`);
       return;
     }
-    
-    console.log(`[Bot] processDate: ${text} -> setting state=time`);
-    
-    const newData = { ...sess.data, date: toISODateString(date) };
-    updateUserSession(userId, userId, { state: 'time', data: newData });
-    
-    await this.send(userId, `✅ ${formatDate(date, 'long')}\n\n🕐 Введите время события (например: 14:30) или напишите "нет":`, [
-      [callbackButton('❌ Отмена', 'cancel')]
-    ]);
-  }
 
-  private async processTime(userId: number, text: string, sess: any): Promise<void> {
-    let time = '';
-    
-    if (text.toLowerCase() !== 'нет' && text.toLowerCase() !== 'skip') {
-      const parsed = parseTime(text);
-      if (!parsed) {
-        await this.send(userId, '❌ Не понял время. Напишите: 14:30 или "нет"');
-        return;
-      }
-      time = `${parsed.hours.toString().padStart(2, '0')}:${parsed.minutes.toString().padStart(2, '0')}`;
+    if (isDateInPast(date, timezone)) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '⚠️ Эта дата уже прошла. Хотите создать напоминание на следующий год?',
+        [
+          [callbackButton('Да, на следующий год', `set_next_year:${date.toISOString()}`)],
+          [callbackButton('Ввести другую дату', 'retry_date')],
+          [callbackButton('❌ Отмена', 'cancel')]
+        ]
+      );
+      return;
     }
-    
-    console.log(`[Bot] processTime: ${time || 'no time'} -> asking for period`);
-    
-    const newData = { ...sess.data, time };
-    updateUserSession(userId, userId, { state: 'period', data: newData });
-    
-    // Спрашиваем за сколько напомнить
-    await this.send(userId, '⏰ За сколько напомнить?', [
+
+    updateUserSession(userId, chatId, {
+      state: 'waiting_for_time',
+      data: { 
+        ...session.data, 
+        temp_date: toISODateString(date)
+      }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `✅ Дата: *${formatDate(date, 'long')}*\n\n🕐 Введите время события:\n\n_Формат: HH-MM_\n_Например: 14-30 (14:30)_`,
       [
-        callbackButton('3 месяца', 'period:7776000000'),
-        callbackButton('1 месяц', 'period:2592000000')
+        [callbackButton('⏭ Пропустить', 'skip_time')],
+        [callbackButton('❌ Отмена', 'cancel')]
       ],
-      [
-        callbackButton('1 неделя', 'period:604800000'),
-        callbackButton('1 день', 'period:86400000')
-      ],
-      [
-        callbackButton('1 час', 'period:3600000')
-      ],
-      [callbackButton('❌ Отмена', 'cancel')]
-    ]);
+      'markdown'
+    );
   }
 
-  private async processPeriod(userId: number, periodMs: number): Promise<void> {
-    const sess = getUserSession(userId, userId);
-    const d = sess.data;
-    
-    console.log(`[Bot] processPeriod: ${periodMs}ms -> showing confirmation`);
-    
-    // Находим название периода
-    const periodLabel = REMINDER_PERIODS.find(p => p.value === periodMs)?.label || 'выбранное время';
-    
-    const newData = { ...d, period: periodMs };
-    updateUserSession(userId, userId, { state: 'confirm', data: newData });
-    
-    const dateStr = d.date ? formatDate(new Date(d.date), 'long') : 'дата не указана';
-    const timeStr = d.time ? ` в ${d.time}` : '';
-    const titleStr = d.title || 'без названия';
-    
-    await this.send(userId, 
-      `📋 Проверка:\n\n` +
-      `📌 ${titleStr}\n` +
-      `📅 ${dateStr}${timeStr}\n` +
-      `⏰ Напомнить ${periodLabel}\n\n` +
-      `Создать напоминание?`, 
+  /**
+   * Handle time input
+   */
+  private async handleTimeInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    const time = parseTime(text);
+
+    if (!time) {
+      await this.api.sendText(chatId, 'Не удалось распознать время. Введите в формате HH-MM (например: 14-30):');
+      return;
+    }
+
+    updateUserSession(userId, chatId, {
+      state: 'waiting_for_description',
+      data: { 
+        ...session.data, 
+        temp_time: formatTime(time.hours, time.minutes)
+      }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `✅ Время: *${formatTime(time.hours, time.minutes)}*\n\n📝 Добавьте описание (необязательно) или пропустите:`,
       [
-        [callbackButton('✅ Создать', 'confirm')],
+        [callbackButton('⏭ Пропустить', 'skip_description')],
+        [callbackButton('❌ Отмена', 'cancel')]
+      ],
+      'markdown'
+    );
+  }
+
+  /**
+   * Handle description input
+   */
+  private async handleDescriptionInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    updateUserSession(userId, chatId, {
+      state: 'idle',
+      data: { ...session.data, temp_description: text }
+    });
+
+    await this.showReminderPreview(chatId, session.data);
+  }
+
+  /**
+   * Show reminder preview
+   */
+  private async showReminderPreview(chatId: number, sessionData: UserSession['data']): Promise<void> {
+    const date = sessionData.temp_date ? new Date(sessionData.temp_date) : new Date();
+    const timeStr = sessionData.temp_time || '';
+    const periods = sessionData.temp_periods || [];
+    const periodLabels = periods.map(p => formatPeriod(p)).join(', ');
+
+    const text = `
+📋 *Проверьте напоминание*
+
+📌 *Название:* ${sessionData.temp_title}
+📅 *Дата:* ${formatDate(date, 'long')}${timeStr ? ` в ${timeStr}` : ''}
+📝 *Описание:* ${sessionData.temp_description || 'нет'}
+🔔 *Напомнить:* ${periodLabels || 'не выбрано'}
+🔄 *Повторять ежегодно:* ${sessionData.temp_repeat ? 'да' : 'нет'}
+
+Всё верно?
+`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('✅ Создать', 'confirm_reminder')],
+      [
+        callbackButton('🔔 Периоды', 'select_periods'),
+        callbackButton('🔄 Повтор', 'toggle_repeat')
+      ],
+      [callbackButton('❌ Отмена', 'cancel')]
+    ];
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  /**
+   * Show period selection
+   */
+  private async showPeriodSelection(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const selectedPeriods = session.data.temp_periods || [];
+
+    const buttons: InlineKeyboardButton[][] = PREDEFINED_PERIODS.map((period, index) => {
+      const isSelected = selectedPeriods.includes(period.value);
+      const prefix = isSelected ? '✅ ' : '⬜ ';
+      return [callbackButton(`${prefix}${period.label}`, `toggle_period:${index}`)];
+    });
+
+    buttons.push([callbackButton('✅ Готово', 'confirm_periods')]);
+    buttons.push([callbackButton('❌ Отмена', 'cancel')]);
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      '🔔 *Выберите периоды напоминаний*\n\nМожно выбрать несколько:',
+      buttons,
+      'markdown'
+    );
+  }
+
+  /**
+   * Toggle period selection
+   */
+  private async togglePeriod(userId: number, chatId: number, periodIndex: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const periods = [...(session.data.temp_periods || [])];
+    const periodValue = PREDEFINED_PERIODS[periodIndex].value;
+
+    const existingIndex = periods.indexOf(periodValue);
+    if (existingIndex >= 0) {
+      periods.splice(existingIndex, 1);
+    } else {
+      periods.push(periodValue);
+      periods.sort((a, b) => b - a); // Sort descending (largest first)
+    }
+
+    updateUserSession(userId, chatId, {
+      data: { ...session.data, temp_periods: periods }
+    });
+
+    await this.showPeriodSelection(userId, chatId);
+  }
+
+  /**
+   * Confirm periods selection
+   */
+  private async confirmPeriods(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const periods = session.data.temp_periods || [];
+
+    if (periods.length === 0) {
+      await this.api.sendText(chatId, 'Выберите хотя бы один период напоминания.');
+      return;
+    }
+
+    await this.showReminderPreview(chatId, session.data);
+  }
+
+  /**
+   * Toggle repeat yearly
+   */
+  private async toggleRepeat(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const newRepeat = !session.data.temp_repeat;
+
+    updateUserSession(userId, chatId, {
+      data: { ...session.data, temp_repeat: newRepeat }
+    });
+
+    await this.showReminderPreview(chatId, { ...session.data, temp_repeat: newRepeat });
+  }
+
+  /**
+   * Confirm and create reminder
+   */
+  private async confirmReminder(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const data = session.data;
+
+    console.log('[CONFIRM] Session data:', JSON.stringify(data, null, 2));
+
+    if (!data.temp_title || !data.temp_date) {
+      await this.api.sendText(chatId, 'Ошибка: недостаточно данных для создания напоминания.');
+      return;
+    }
+
+    try {
+      const reminder = createReminder({
+        user_id: userId,
+        chat_id: chatId,
+        title: data.temp_title,
+        description: data.temp_description,
+        event_date: data.temp_date,
+        event_time: data.temp_time,
+        timezone: data.temp_timezone || 'Europe/Moscow',
+        reminder_periods: data.temp_periods || [86400000],
+        repeat_yearly: data.temp_repeat || false,
+        is_active: true
+      });
+
+      console.log('[CONFIRM] Reminder created:', JSON.stringify(reminder, null, 2));
+
+      clearUserSession(userId, chatId);
+
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        `✅ *Напоминание создано!*\n\n📌 ${reminder.title}\n📅 ${formatDate(new Date(reminder.event_date), 'full')}\n\nЯ напомню вам вовремя!`,
+        [
+          [callbackButton('📋 Мои напоминания', 'list_reminders')],
+          [callbackButton('➕ Добавить ещё', 'add_reminder')]
+        ],
+        'markdown'
+      );
+
+      // Also notify the group
+      await this.notifyGroup(reminder);
+    } catch (error) {
+      console.error('[CONFIRM] Error creating reminder:', error);
+      await this.api.sendText(chatId, 'Ошибка при создании напоминания. Попробуйте ещё раз.');
+    }
+  }
+
+  /**
+   * Show reminders list
+   */
+  private async showRemindersList(userId: number, chatId: number): Promise<void> {
+    const reminders = getRemindersByUser(userId, chatId);
+
+    console.log(`[LIST] Found ${reminders.length} reminders for user ${userId}`);
+
+    if (reminders.length === 0) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '📭 У вас пока нет напоминаний.\n\nХотите создать первое?',
+        [[callbackButton('➕ Добавить напоминание', 'add_reminder')]]
+      );
+      return;
+    }
+
+    let text = '📋 *Ваши напоминания:*\n\n';
+    
+    reminders.slice(0, 10).forEach((reminder, index) => {
+      const date = new Date(reminder.event_date);
+      const timeStr = reminder.event_time ? ` в ${reminder.event_time}` : '';
+      text += `${index + 1}. ${reminder.title}\n   📅 ${formatDate(date, 'short')}${timeStr}\n\n`;
+    });
+
+    if (reminders.length > 10) {
+      text += `_... и ещё ${reminders.length - 10} напоминаний_`;
+    }
+
+    const buttons: InlineKeyboardButton[][] = reminders.slice(0, 5).map(r => [
+      callbackButton(`📌 ${r.title}`, `view_reminder:${r.id}`)
+    ]);
+    buttons.push([callbackButton('➕ Добавить', 'add_reminder')]);
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  /**
+   * Show reminder details
+   */
+  private async showReminderDetails(chatId: number, reminderId: string): Promise<void> {
+    const reminder = getReminderById(reminderId);
+    
+    if (!reminder) {
+      await this.api.sendText(chatId, 'Напоминание не найдено.');
+      return;
+    }
+
+    const date = new Date(reminder.event_date);
+    const now = new Date();
+    const timeUntil = date.getTime() - now.getTime();
+    const periodLabels = reminder.reminder_periods.map(p => formatPeriod(p)).join(', ');
+
+    const text = `
+📌 *${reminder.title}*
+
+📅 *Дата:* ${formatDate(date, 'long')}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
+📝 *Описание:* ${reminder.description || 'нет'}
+🔔 *Напомнить:* ${periodLabels}
+🔄 *Повторять ежегодно:* ${reminder.repeat_yearly ? 'да' : 'нет'}
+🌍 *Часовой пояс:* ${reminder.timezone}
+⏳ *Осталось:* ${timeUntil > 0 ? formatTimeRemaining(timeUntil) : 'событие прошло'}
+`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('✏️ Редактировать', `edit_reminder:${reminderId}`)],
+      [callbackButton('🗑 Удалить', `delete_reminder:${reminderId}`)],
+      [callbackButton('◀️ Назад', 'list_reminders')]
+    ];
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  /**
+   * Confirm delete reminder
+   */
+  private async confirmDeleteReminder(chatId: number, reminderId: string): Promise<void> {
+    const reminder = getReminderById(reminderId);
+    
+    if (!reminder) {
+      await this.api.sendText(chatId, 'Напоминание не найдено.');
+      return;
+    }
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `⚠️ *Подтверждение удаления*\n\nВы уверены, что хотите удалить напоминание "${reminder.title}"?`,
+      [
+        [callbackButton('✅ Да, удалить', `confirm_delete:${reminderId}`)],
+        [callbackButton('❌ Отмена', `view_reminder:${reminderId}`)]
+      ],
+      'markdown'
+    );
+  }
+
+  /**
+   * Execute delete reminder (archive)
+   */
+  private async executeDeleteReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
+    const success = deleteReminder(reminderId);
+    
+    if (success) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '✅ Напоминание удалено.',
+        [
+          [callbackButton('📋 Мои напоминания', 'list_reminders')],
+          [callbackButton('➕ Добавить новое', 'add_reminder')]
+        ]
+      );
+    } else {
+      await this.api.sendText(chatId, 'Ошибка при удалении напоминания.');
+    }
+  }
+
+  /**
+   * Show settings
+   */
+  private async showSettings(userId: number, chatId: number): Promise<void> {
+    const settings = getUserSettings(userId, chatId);
+    const timezone = settings?.timezone || 'Europe/Moscow';
+    const tzInfo = SUPPORTED_TIMEZONES.find(t => t.value === timezone);
+
+    const now = getCurrentDateTimeInTimezone(timezone);
+    const currentTime = `${now.getHours().toString().padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}`;
+
+    const text = `
+⚙️ *Настройки*
+
+🌐 *Часовой пояс:* ${tzInfo?.label || timezone}
+🕐 *Текущее время:* ${currentTime}
+`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('🌐 Изменить часовой пояс', 'change_timezone')],
+      [callbackButton('◀️ В меню', 'main_menu')]
+    ];
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  /**
+   * Show timezone selection
+   */
+  private async showTimezoneSelection(chatId: number): Promise<void> {
+    const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map(tz => [
+      callbackButton(tz.label, `set_timezone:${tz.value}`)
+    ]);
+    buttons.push([callbackButton('◀️ Назад', 'settings')]);
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      '🌐 *Выберите часовой пояс:*',
+      buttons,
+      'markdown'
+    );
+  }
+
+  /**
+   * Set timezone
+   */
+  private async setTimezone(userId: number, chatId: number, timezone: string): Promise<void> {
+    upsertUserSettings({ user_id: userId, chat_id: chatId, timezone });
+    await this.showSettings(userId, chatId);
+  }
+
+  /**
+   * Show main menu
+   */
+  private async showMainMenu(chatId: number): Promise<void> {
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      '🏠 *Главное меню*\n\nВыберите действие:',
+      [
+        [callbackButton('➕ Добавить напоминание', 'add_reminder')],
+        [callbackButton('📋 Мои напоминания', 'list_reminders')],
+        [callbackButton('⚙️ Настройки', 'settings')]
+      ],
+      'markdown'
+    );
+  }
+
+  /**
+   * Show help
+   */
+  private async showHelp(chatId: number): Promise<void> {
+    const text = `
+📚 *Справка по PamPin*
+
+*Что я умею:*
+• Создавать напоминания о важных датах
+• Напоминать за указанный период
+• Повторять напоминания ежегодно
+• Поддерживать разные часовые пояса
+
+*Как создать напоминание:*
+1. Нажмите "➕ Добавить напоминание"
+2. Введите название события
+3. Укажите дату (формат: DD/MM/YYYY)
+4. Укажите время (формат: HH-MM)
+5. Выберите периоды напоминаний
+
+*Форматы даты:*
+• 25/03/2026 — 25 марта 2026
+• 25.03.2026 — альтернатива
+• 25 марта 2026 — текстом
+
+*Форматы времени:*
+• 14-30 — 14:30 (основной)
+• 14:30 — альтернатива
+
+*Периоды напоминаний:*
+Можно выбрать несколько:
+• за 3 месяца, за 1 месяц
+• за 1 неделю, за 3 дня, за 1 день
+• за 1 час, за 30 минут
+
+*Ежегодное повторение:*
+Включите для повторяющихся событий (дни рождения, годовщины).
+
+*Команды:*
+/start — главное меню
+/list — список напоминаний
+/settings — настройки (часовой пояс)
+/help — эта справка
+`;
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      text,
+      [[callbackButton('🏠 В меню', 'main_menu')]],
+      'markdown'
+    );
+  }
+
+  /**
+   * Notify group about new reminder
+   */
+  private async notifyGroup(reminder: Reminder): Promise<void> {
+    const date = new Date(reminder.event_date);
+    const timeStr = reminder.event_time ? ` в ${reminder.event_time}` : '';
+    
+    const text = `
+🔔 *Новое напоминание создано*
+
+📌 ${reminder.title}
+📅 ${formatDate(date, 'long')}${timeStr}
+ ${reminder.description ? `📝 ${reminder.description}` : ''}
+`;
+
+    try {
+      await this.api.sendText(this.groupId, text, 'markdown');
+    } catch (error) {
+      console.error('Failed to notify group:', error);
+    }
+  }
+
+  /**
+   * Send reminder notification
+   */
+  async sendReminderNotification(reminder: Reminder, periodMs: number): Promise<void> {
+    const date = new Date(reminder.event_date);
+    const timeStr = reminder.event_time ? ` в ${reminder.event_time}` : '';
+    const periodLabel = formatPeriod(periodMs);
+    
+    const text = `
+🔔 *Напоминание!*
+
+📌 ${reminder.title}
+📅 ${formatDate(date, 'long')}${timeStr}
+ ${reminder.description ? `📝 ${reminder.description}` : ''}
+
+⏰ *Напоминаю ${periodLabel}*
+`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('✅ Понял', 'dismiss')],
+      [callbackButton('📋 Все напоминания', 'list_reminders')]
+    ];
+
+    try {
+      // Send to user
+      await this.api.sendMessageWithKeyboard(reminder.chat_id, text, buttons, 'markdown');
+      
+      // Also send to group
+      await this.api.sendText(this.groupId, `📤 Напоминание отправлено пользователю:\n\n${text}`, 'markdown');
+    } catch (error) {
+      console.error('Failed to send reminder notification:', error);
+    }
+  }
+
+  /**
+   * Skip time input
+   */
+  private async skipTime(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    updateUserSession(userId, chatId, {
+      state: 'waiting_for_description',
+      data: { ...session.data, temp_time: undefined }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      '📝 Добавьте описание (необязательно) или пропустите:',
+      [
+        [callbackButton('⏭ Пропустить', 'skip_description')],
         [callbackButton('❌ Отмена', 'cancel')]
       ]
     );
   }
 
-  private async doCreate(userId: number): Promise<void> {
-    const sess = getUserSession(userId, userId);
-    const d = sess.data;
-
-    console.log(`[Bot] doCreate: data=`, JSON.stringify(d));
-
-    if (!d.title || !d.date) {
-      await this.send(userId, '❌ Ошибка. Попробуйте /add');
-      return;
-    }
-
-    // Если период не выбран - ставим 1 день по умолчанию
-    const period = d.period || 86400000;
-
-    createReminder({
-      user_id: userId,
-      chat_id: userId,
-      title: d.title,
-      event_date: d.date,
-      event_time: d.time,
-      timezone: 'Europe/Moscow',
-      reminder_periods: [period],
-      repeat_yearly: false,
-      is_active: true
+  /**
+   * Skip description input
+   */
+  private async skipDescription(userId: number, chatId: number): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    updateUserSession(userId, chatId, {
+      state: 'idle',
+      data: { ...session.data, temp_description: undefined }
     });
 
-    clearUserSession(userId, userId);
-    
-    // Находим название периода
-    const periodLabel = REMINDER_PERIODS.find(p => p.value === period)?.label || 'за 1 день';
-    
-    // В группу
-    await this.sendToGroup(
-      `🆕 Новое напоминание:\n` +
-      `📌 ${d.title}\n` +
-      `📅 ${formatDate(new Date(d.date), 'long')}\n` +
-      `⏰ Напомнить ${periodLabel}`
-    );
-    
-    await this.send(userId, `✅ Напоминание "${d.title}" создано!\n\nНапомню ${periodLabel}`, [
-      [callbackButton('📋 Список', 'list')],
-      [callbackButton('➕ Ещё', 'add')]
-    ]);
+    await this.showReminderPreview(chatId, session.data);
   }
 
-  private async showList(userId: number): Promise<void> {
-    const list = getRemindersByUser(userId, userId);
+  /**
+   * Set date to next year
+   */
+  private async setDateNextYear(userId: number, chatId: number, dateStr: string): Promise<void> {
+    const session = getUserSession(userId, chatId);
+    const originalDate = new Date(dateStr);
+    const now = new Date();
     
-    console.log(`[Bot] showList: ${list.length} reminders`);
+    // Set to next year occurrence
+    const nextYearDate = new Date(originalDate);
+    nextYearDate.setFullYear(now.getFullYear());
     
-    if (!list.length) {
-      await this.send(userId, '📭 Напоминаний нет', [
-        [callbackButton('➕ Создать', 'add')]
-      ]);
+    // If still in the past, add one more year
+    if (nextYearDate <= now) {
+      nextYearDate.setFullYear(nextYearDate.getFullYear() + 1);
+    }
+
+    updateUserSession(userId, chatId, {
+      state: 'waiting_for_time',
+      data: { 
+        ...session.data, 
+        temp_date: toISODateString(nextYearDate),
+        temp_repeat: true // Auto-enable yearly repeat
+      }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `✅ Дата: *${formatDate(nextYearDate, 'long')}* (ежегодное повторение включено)\n\n🕐 Введите время события:\n\n_Формат: HH-MM_`,
+      [
+        [callbackButton('⏭ Пропустить', 'skip_time')],
+        [callbackButton('❌ Отмена', 'cancel')]
+      ],
+      'markdown'
+    );
+  }
+
+  /**
+   * Retry date input
+   */
+  private async retryDate(userId: number, chatId: number): Promise<void> {
+    const timezone = this.getUserTimezone(userId, chatId);
+    const todayStr = getTodayFormatted(timezone);
+    
+    updateUserSession(userId, chatId, { state: 'waiting_for_date' });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `📅 Введите другую дату события:\n\n_Формат: DD/MM/YYYY_\n_Например: ${todayStr}_`,
+      [[callbackButton('❌ Отмена', 'cancel')]],
+      'markdown'
+    );
+  }
+
+  /**
+   * Start edit reminder
+   */
+  private async startEditReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
+    const reminder = getReminderById(reminderId);
+    
+    if (!reminder) {
+      await this.api.sendText(chatId, 'Напоминание не найдено.');
       return;
     }
 
-    let txt = '📋 Ваши напоминания:\n\n';
-    list.forEach((r, i) => {
-      const periodLabel = REMINDER_PERIODS.find(p => p.value === r.reminder_periods[0])?.label || 'за 1 день';
-      txt += `${i + 1}. ${r.title}\n   📅 ${formatDate(new Date(r.event_date), 'short')} (${periodLabel})\n`;
-    });
-
-    const btns: InlineKeyboardButton[][] = list.map(r => [
-      callbackButton(`🗑 ${r.title.substring(0, 15)}${r.title.length > 15 ? '...' : ''}`, `del:${r.id}`)
-    ]);
-    btns.push([callbackButton('➕ Добавить', 'add')]);
-    
-    await this.send(userId, txt, btns);
+    // For now, just show reminder details - full edit flow can be added later
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      '⚠️ Редактирование пока не реализовано. Вы можете удалить напоминание и создать новое.',
+      [
+        [callbackButton('🗑 Удалить', `delete_reminder:${reminderId}`)],
+        [callbackButton('◀️ Назад', `view_reminder:${reminderId}`)]
+      ]
+    );
   }
 }
