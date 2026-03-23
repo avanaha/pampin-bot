@@ -23,7 +23,7 @@ export class MaxApi {
     const url = `${this.baseUrl}${endpoint}`;
     
     console.log(`[MaxApi] ${method} ${url}`);
-    console.log(`[MaxApi] Body:`, body ? JSON.stringify(body) : 'none');
+    if (body) console.log(`[MaxApi] Body:`, JSON.stringify(body).substring(0, 200));
     
     const headers: Record<string, string> = {
       'Authorization': this.token,
@@ -40,7 +40,7 @@ export class MaxApi {
     const responseText = await response.text();
     
     console.log(`[MaxApi] Status: ${response.status}`);
-    console.log(`[MaxApi] Response: ${responseText.substring(0, 300)}`);
+    console.log(`[MaxApi] Response: ${responseText.substring(0, 200)}`);
 
     if (!response.ok) {
       let errorData: any = {};
@@ -90,11 +90,13 @@ export class MaxApi {
   }
 
   async answerCallback(callbackId: string, notificationText?: string): Promise<void> {
-    console.log(`[MaxApi] answerCallback ${callbackId}`);
-    await this.requestRaw('POST', '/answers', {
-      callback_id: callbackId,
-      notification: notificationText || ''
-    });
+    console.log(`[MaxApi] answerCallback`);
+    // callback_id в query-параметрах!
+    let url = `/answers?callback_id=${encodeURIComponent(callbackId)}`;
+    if (notificationText) {
+      url += `&notification=${encodeURIComponent(notificationText)}`;
+    }
+    await this.requestRaw('POST', url);
   }
 
   async unsubscribeWebhook(): Promise<void> {
