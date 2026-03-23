@@ -27,11 +27,12 @@ export interface UserSettings {
 export interface UserSession {
   user_id: number;
   chat_id: number;
-  state: 'idle' | 'title' | 'date' | 'time' | 'waiting_for_title' | 'waiting_for_date' | 'waiting_for_time' | 'waiting_for_description';
+  state: 'idle' | 'title' | 'date' | 'time' | 'period' | 'confirm';
   data: {
     title?: string;
     date?: string;
     time?: string;
+    period?: number;
     description?: string;
     [key: string]: any;
   };
