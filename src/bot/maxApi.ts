@@ -28,6 +28,9 @@ export class MaxApi {
     this.baseUrl = baseUrl;
   }
 
+  /**
+   * Make API request
+   */
   private async request<T>(
     method: string,
     endpoint: string,
@@ -84,28 +87,48 @@ export class MaxApi {
     }
   }
 
+  /**
+   * Get bot information
+   */
   async getMe(): Promise<User> {
     return this.request<User>('GET', '/me');
   }
 
+  /**
+   * Get all chats
+   */
   async getChats(): Promise<Chat[]> {
     return this.request<Chat[]>('GET', '/chats');
   }
 
+  /**
+   * Get chat by ID
+   */
   async getChat(chatId: number): Promise<Chat> {
     return this.request<Chat>('GET', `/chats/${chatId}`);
   }
 
+  /**
+   * Send message to chat (chat_id in query params)
+   */
   async sendMessage(chatId: number, body: NewMessageBody): Promise<Message> {
+    // chat_id must be in query params, not body!
     const endpoint = `/messages?chat_id=${chatId}`;
     return this.request<Message>('POST', endpoint, body);
   }
 
+  /**
+   * Send message to user by user_id (user_id in query params)
+   */
   async sendToUser(userId: number, body: NewMessageBody): Promise<Message> {
+    // user_id must be in query params, not body!
     const endpoint = `/messages?user_id=${userId}`;
     return this.request<Message>('POST', endpoint, body);
   }
 
+  /**
+   * Send simple text message to chat
+   */
   async sendText(
     chatId: number, 
     text: string, 
@@ -114,6 +137,9 @@ export class MaxApi {
     return this.sendMessage(chatId, { text, format });
   }
 
+  /**
+   * Send text message to user
+   */
   async sendTextToUser(
     userId: number, 
     text: string, 
@@ -122,6 +148,9 @@ export class MaxApi {
     return this.sendToUser(userId, { text, format });
   }
 
+  /**
+   * Send message with inline keyboard to chat
+   */
   async sendMessageWithKeyboard(
     chatId: number,
     text: string,
@@ -140,6 +169,9 @@ export class MaxApi {
     });
   }
 
+  /**
+   * Send message with inline keyboard to user
+   */
   async sendMessageWithKeyboardToUser(
     userId: number,
     text: string,
@@ -158,6 +190,9 @@ export class MaxApi {
     });
   }
 
+  /**
+   * Edit message
+   */
   async editMessage(
     chatId: number,
     messageId: number,
@@ -166,18 +201,29 @@ export class MaxApi {
     return this.request<Message>('PUT', `/messages?chat_id=${chatId}&message_id=${messageId}`, body);
   }
 
+  /**
+   * Delete message
+   */
   async deleteMessage(chatId: number, messageId: number): Promise<void> {
     await this.request<void>('DELETE', `/messages?chat_id=${chatId}&message_id=${messageId}`);
   }
 
+  /**
+   * Answer callback (callback_id in query params)
+   */
   async answerCallback(callbackId: string, notificationText?: string): Promise<void> {
+    // callback_id must be in query params!
     let endpoint = `/answers?callback_id=${encodeURIComponent(callbackId)}`;
     
     console.log(`[API] Answering callback: ${callbackId}`);
     
+    // Send empty body - notification text is optional
     await this.request<void>('POST', endpoint, {});
   }
 
+  /**
+   * Get updates (Long Polling)
+   */
   async getUpdates(
     limit: number = 100,
     timeout: number = 30,
@@ -197,6 +243,9 @@ export class MaxApi {
     return this.request<{ updates: Update[]; marker: number }>('GET', `/updates?${params.toString()}`);
   }
 
+  /**
+   * Subscribe to webhook
+   */
   async subscribeWebhook(
     url: string,
     updateTypes?: string[]
@@ -207,27 +256,43 @@ export class MaxApi {
     });
   }
 
+  /**
+   * Unsubscribe from webhook
+   */
   async unsubscribeWebhook(): Promise<void> {
     await this.request<void>('DELETE', '/subscriptions');
   }
 
+  /**
+   * Get current subscriptions
+   */
   async getSubscriptions(): Promise<Subscription[]> {
     return this.request<Subscription[]>('GET', '/subscriptions');
   }
 
+  /**
+   * Send bot action (typing, etc.)
+   */
   async sendAction(chatId: number, action: 'typing' | 'sending'): Promise<void> {
     await this.request<void>('POST', `/chats/${chatId}/actions`, { action });
   }
 
+  /**
+   * Get chat members
+   */
   async getChatMembers(chatId: number): Promise<User[]> {
     return this.request<User[]>('GET', `/chats/${chatId}/members`);
   }
 
+  /**
+   * Get chat administrators
+   */
   async getChatAdmins(chatId: number): Promise<User[]> {
     return this.request<User[]>('GET', `/chats/${chatId}/members/admins`);
   }
 }
 
+// Helper function to create inline keyboard buttons
 export function callbackButton(text: string, payload: string): InlineKeyboardButton {
   return { type: 'callback', text, payload };
 }
@@ -240,6 +305,7 @@ export function messageButton(text: string, message: string): InlineKeyboardButt
   return { type: 'message', text, payload: message };
 }
 
+// Export singleton instance
 let maxApiInstance: MaxApi | null = null;
 
 export function getMaxApi(token?: string): MaxApi {
