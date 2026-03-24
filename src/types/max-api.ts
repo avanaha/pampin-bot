@@ -88,8 +88,14 @@ export interface SendMessageRequest {
   body: NewMessageBody;
 }
 
+/**
+ * Callback object structure from MAX API
+ * When a user clicks a callback button, MAX sends this structure
+ */
 export interface Callback {
+  /** Unique identifier for this callback */
   id: string;
+  /** Payload from the button that was clicked */
   payload: string;
 }
 
