@@ -219,6 +219,7 @@ export class PamPinBot {
     
     const anyUpdate = update as any;
     
+    // Log complete structure
     console.log('[CALLBACK] JSON:', JSON.stringify(anyUpdate, null, 2));
     
     let callbackId = '';
@@ -226,17 +227,21 @@ export class PamPinBot {
     let userId = 0;
     let chatId = 0;
     
+    // Extract callback_id from update.callback
     if (update.callback) {
       callbackId = update.callback.id || '';
       payload = update.callback.payload || '';
       console.log('[CALLBACK] From update.callback: id=' + callbackId + ', payload=' + payload);
     }
     
+    // Try message_callback
     if (!callbackId && update.message_callback) {
       callbackId = update.message_callback.callback_id || '';
       payload = update.message_callback.payload || '';
+      console.log('[CALLBACK] From message_callback: id=' + callbackId + ', payload=' + payload);
     }
     
+    // Try top-level fields
     if (!callbackId) {
       callbackId = anyUpdate.callback_id || '';
     }
@@ -244,6 +249,7 @@ export class PamPinBot {
       payload = anyUpdate.payload || '';
     }
     
+    // Look for callback_id in message.attachments
     if (!callbackId && anyUpdate.message?.attachments) {
       for (const att of anyUpdate.message.attachments) {
         if (att.callback_id) {
@@ -253,6 +259,7 @@ export class PamPinBot {
       }
     }
     
+    // Extract userId
     if (update.sender?.user_id) {
       userId = update.sender.user_id;
     } else if (anyUpdate.user?.user_id) {
@@ -261,6 +268,7 @@ export class PamPinBot {
       userId = anyUpdate.message.sender.user_id;
     }
     
+    // Extract chatId
     if (anyUpdate.chat_id) {
       chatId = anyUpdate.chat_id;
     } else if (anyUpdate.message?.recipient?.chat_id) {
@@ -271,6 +279,7 @@ export class PamPinBot {
     
     console.log('[CALLBACK] FINAL: callbackId=' + callbackId + ', payload=' + payload + ', userId=' + userId + ', chatId=' + chatId);
 
+    // Answer callback
     if (callbackId) {
       try {
         await this.api.answerCallback(callbackId);
