@@ -6,7 +6,11 @@ import fs from 'fs';
 
 let db: Database.Database | null = null;
 
+/**
+ * Initialize database
+ */
 export function initDatabase(dbPath: string): Database.Database {
+  // Ensure directory exists
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -20,6 +24,9 @@ export function initDatabase(dbPath: string): Database.Database {
   return db;
 }
 
+/**
+ * Get database instance
+ */
 export function getDb(): Database.Database {
   if (!db) {
     throw new Error('Database not initialized');
@@ -27,6 +34,9 @@ export function getDb(): Database.Database {
   return db;
 }
 
+/**
+ * Close database connection
+ */
 export function closeDatabase(): void {
   if (db) {
     db.close();
@@ -34,9 +44,13 @@ export function closeDatabase(): void {
   }
 }
 
+/**
+ * Create all tables
+ */
 function createTables(): void {
   const db = getDb();
 
+  // Reminders table
   db.exec(`
     CREATE TABLE IF NOT EXISTS reminders (
       id TEXT PRIMARY KEY,
@@ -62,6 +76,7 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_reminders_is_active ON reminders(is_active);
   `);
 
+  // User settings table
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id INTEGER NOT NULL,
@@ -75,6 +90,7 @@ function createTables(): void {
     );
   `);
 
+  // User sessions table
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_sessions (
       user_id INTEGER NOT NULL,
@@ -86,6 +102,7 @@ function createTables(): void {
     );
   `);
 
+  // Notifications table
   db.exec(`
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
@@ -104,6 +121,7 @@ function createTables(): void {
   `);
 }
 
+// Reminder operations
 export function createReminder(reminder: Omit<Reminder, 'id' | 'created_at' | 'updated_at'>): Reminder {
   const db = getDb();
   const id = uuidv4();
@@ -224,6 +242,46 @@ export function deleteReminder(id: string): boolean {
   return result.changes > 0;
 }
 
+// Archive reminder (soft delete with is_active = 0)
+export function archiveReminder(id: string): boolean {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('UPDATE reminders SET is_active = 0, updated_at = ? WHERE id = ?');
+  const result = stmt.run(now, id);
+  return result.changes > 0;
+}
+
+// Restore reminder from archive (set is_active = 1)
+export function restoreReminder(id: string): boolean {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('UPDATE reminders SET is_active = 1, updated_at = ? WHERE id = ?');
+  const result = stmt.run(now, id);
+  return result.changes > 0;
+}
+
+// Get archived reminders by user
+export function getArchivedRemindersByUser(userId: number, chatId: number): Reminder[] {
+  const db = getDb();
+  const stmt = db.prepare('SELECT * FROM reminders WHERE user_id = ? AND chat_id = ? AND is_active = 0 ORDER BY event_date DESC');
+  const rows = stmt.all(userId, chatId) as any[];
+  return rows.map(rowToReminder);
+}
+
+// Permanently delete reminder
+export function deleteReminderPermanently(id: string): boolean {
+  const db = getDb();
+  // First delete related notifications
+  const deleteNotifications = db.prepare('DELETE FROM notifications WHERE reminder_id = ?');
+  deleteNotifications.run(id);
+  
+  // Then delete the reminder
+  const stmt = db.prepare('DELETE FROM reminders WHERE id = ?');
+  const result = stmt.run(id);
+  return result.changes > 0;
+}
+
+// User settings operations
 export function getUserSettings(userId: number, chatId: number): UserSettings | null {
   const db = getDb();
   const stmt = db.prepare('SELECT * FROM user_settings WHERE user_id = ? AND chat_id = ?');
@@ -279,6 +337,7 @@ export function upsertUserSettings(settings: Partial<UserSettings> & { user_id: 
   return getUserSettings(settings.user_id, settings.chat_id)!;
 }
 
+// User session operations
 export function getUserSession(userId: number, chatId: number): UserSession {
   const db = getDb();
   const stmt = db.prepare('SELECT * FROM user_sessions WHERE user_id = ? AND chat_id = ?');
@@ -294,6 +353,7 @@ export function getUserSession(userId: number, chatId: number): UserSession {
     };
   }
 
+  // Create new session
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO user_sessions (user_id, chat_id, state, data, last_activity)
@@ -341,6 +401,7 @@ export function clearUserSession(userId: number, chatId: number): void {
   stmt.run(now, userId, chatId);
 }
 
+// Notification operations
 export function createNotification(notification: Omit<Notification, 'id'>): Notification {
   const db = getDb();
   const id = uuidv4();
@@ -380,6 +441,7 @@ export function updateNotificationStatus(id: string, status: Notification['statu
   stmt.run(status, status === 'sent' ? new Date().toISOString() : null, errorMessage || null, id);
 }
 
+// Helper functions
 function rowToReminder(row: any): Reminder {
   return {
     id: row.id,
