@@ -19,7 +19,6 @@ import {
   parseTime,
   formatDate,
   formatTime,
-  formatTimeRemaining,
   formatPeriod,
   isDateInPast,
   SUPPORTED_TIMEZONES,
@@ -59,36 +58,55 @@ export class PamPinBot {
    * Process incoming update
    */
   async processUpdate(update: Update): Promise<void> {
-    const updateType = update.update_type;
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`[PROCESS] update_type: "${updateType}"`);
-    
-    // Log FULL update structure for debugging
-    console.log(`[PROCESS] FULL UPDATE: ${JSON.stringify(update, null, 2)}`);
+    // ЛОГИРОВАНИЕ С САМОГО НАЧАЛА
+    console.log('');
+    console.log('============================================================');
+    console.log('[PROCESS] NEW UPDATE RECEIVED');
+    console.log('[PROCESS] update_type:', update?.update_type);
+    console.log('[PROCESS] FULL UPDATE JSON:');
+    console.log(JSON.stringify(update, null, 2));
+    console.log('============================================================');
 
-    if (updateType === 'message_created') {
-      await this.handleMessage(update);
-    } else if (updateType === 'message_callback') {
-      await this.handleCallback(update);
-    } else if (updateType === 'bot_started') {
-      await this.handleBotStarted(update);
-    } else {
-      console.log(`[PROCESS] Unknown update_type: ${updateType}`);
+    try {
+      const updateType = update?.update_type;
+      
+      if (!updateType) {
+        console.log('[PROCESS] ERROR: No update_type found!');
+        return;
+      }
+
+      if (updateType === 'message_created') {
+        console.log('[PROCESS] -> Calling handleMessage');
+        await this.handleMessage(update);
+      } else if (updateType === 'message_callback') {
+        console.log('[PROCESS] -> Calling handleCallback');
+        await this.handleCallback(update);
+      } else if (updateType === 'bot_started') {
+        console.log('[PROCESS] -> Calling handleBotStarted');
+        await this.handleBotStarted(update);
+      } else {
+        console.log('[PROCESS] Unknown update_type:', updateType);
+      }
+    } catch (error) {
+      console.error('[PROCESS] ERROR processing update:', error);
     }
-    console.log(`${'='.repeat(60)}\n`);
+    
+    console.log('============================================================');
+    console.log('');
   }
 
   /**
    * Handle bot started
    */
   private async handleBotStarted(update: Update): Promise<void> {
-    console.log('[BOT_STARTED] Handling bot_started');
+    console.log('[BOT_STARTED] === START ===');
     
     const anyUpdate = update as any;
     const userId = update.sender?.user_id || anyUpdate.user?.user_id || 0;
     const chatId = anyUpdate.chat_id || 0;
     
-    console.log(`[BOT_STARTED] userId: ${userId}, chatId: ${chatId}`);
+    console.log('[BOT_STARTED] userId:', userId);
+    console.log('[BOT_STARTED] chatId:', chatId);
 
     const text = `👋 *Добро пожаловать в PamPin!*
 
@@ -105,244 +123,260 @@ export class PamPinBot {
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
 
-    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+    try {
+      await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+      console.log('[BOT_STARTED] Message sent OK');
+    } catch (e) {
+      console.error('[BOT_STARTED] Error:', e);
+    }
   }
 
   /**
    * Handle incoming message
    */
   private async handleMessage(update: Update): Promise<void> {
+    console.log('[MESSAGE] === START ===');
+    
     const anyUpdate = update as any;
     const message = update.message;
     
     if (!message) {
-      console.log('[MESSAGE] No message in update');
+      console.log('[MESSAGE] ERROR: No message in update!');
       return;
     }
 
-    const userId = message.sender?.user_id || 0;
-    const chatId = message.recipient?.chat_id || message.chat_id || 0;
-    const text = message.body?.text || message.text || '';
+    // Логируем структуру message
+    console.log('[MESSAGE] message structure:');
+    console.log(JSON.stringify(message, null, 2));
 
-    console.log(`[MESSAGE] userId: ${userId}, chatId: ${chatId}, text: "${text}"`);
+    // Извлекаем userId - пробуем разные пути
+    let userId = 0;
+    if (message.sender?.user_id) {
+      userId = message.sender.user_id;
+      console.log('[MESSAGE] userId from message.sender.user_id:', userId);
+    } else if (message.from?.user_id) {
+      userId = message.from.user_id;
+      console.log('[MESSAGE] userId from message.from.user_id:', userId);
+    } else if (anyUpdate.sender?.user_id) {
+      userId = anyUpdate.sender.user_id;
+      console.log('[MESSAGE] userId from update.sender.user_id:', userId);
+    } else {
+      console.log('[MESSAGE] WARNING: Could not find userId!');
+    }
 
-    if (!text.trim()) {
+    // Извлекаем chatId - пробуем разные пути
+    let chatId = 0;
+    if (message.recipient?.chat_id) {
+      chatId = message.recipient.chat_id;
+      console.log('[MESSAGE] chatId from message.recipient.chat_id:', chatId);
+    } else if (message.chat_id) {
+      chatId = message.chat_id;
+      console.log('[MESSAGE] chatId from message.chat_id:', chatId);
+    } else if (anyUpdate.chat_id) {
+      chatId = anyUpdate.chat_id;
+      console.log('[MESSAGE] chatId from update.chat_id:', chatId);
+    } else {
+      console.log('[MESSAGE] WARNING: Could not find chatId!');
+    }
+
+    // Извлекаем текст - пробуем разные пути
+    let text = '';
+    if (message.body?.text) {
+      text = message.body.text;
+      console.log('[MESSAGE] text from message.body.text:', text);
+    } else if (message.text) {
+      text = message.text;
+      console.log('[MESSAGE] text from message.text:', text);
+    } else {
+      console.log('[MESSAGE] WARNING: Could not find text!');
+    }
+
+    console.log('[MESSAGE] EXTRACTED: userId=' + userId + ', chatId=' + chatId + ', text="' + text + '"');
+
+    if (!text || !text.trim()) {
       console.log('[MESSAGE] Empty text, skipping');
       return;
     }
 
     // Handle commands
-    if (text.startsWith('/')) {
-      console.log(`[MESSAGE] Detected command: ${text}`);
+    if (text.trim().startsWith('/')) {
+      console.log('[MESSAGE] -> Detected command, calling handleCommand');
       await this.handleCommand(userId, chatId, text.trim());
       return;
     }
 
     // Handle state-based input
+    console.log('[MESSAGE] Getting session for userId=' + userId + ', chatId=' + chatId);
     const session = getUserSession(userId, chatId);
-    console.log(`[MESSAGE] Session state: ${session.state}`);
+    console.log('[MESSAGE] Session state:', session.state);
+    console.log('[MESSAGE] Session data:', JSON.stringify(session.data));
 
     switch (session.state) {
       case 'waiting_for_title':
+        console.log('[MESSAGE] -> calling handleTitleInput');
         await this.handleTitleInput(userId, chatId, text.trim(), session);
         break;
       case 'waiting_for_date':
+        console.log('[MESSAGE] -> calling handleDateInput');
         await this.handleDateInput(userId, chatId, text.trim(), session);
         break;
       case 'waiting_for_time':
+        console.log('[MESSAGE] -> calling handleTimeInput');
         await this.handleTimeInput(userId, chatId, text.trim(), session);
         break;
       case 'waiting_for_description':
+        console.log('[MESSAGE] -> calling handleDescriptionInput');
         await this.handleDescriptionInput(userId, chatId, text.trim(), session);
         break;
       default:
         console.log('[MESSAGE] No active state, showing main menu');
         await this.showMainMenu(chatId);
     }
+    
+    console.log('[MESSAGE] === END ===');
   }
 
   /**
    * Handle command
    */
   private async handleCommand(userId: number, chatId: number, text: string): Promise<void> {
+    console.log('[COMMAND] === START ===');
+    console.log('[COMMAND] userId:', userId);
+    console.log('[COMMAND] chatId:', chatId);
+    console.log('[COMMAND] text:', text);
+
     const cmd = text.toLowerCase().split(' ')[0];
-    console.log(`[COMMAND] Processing command: "${cmd}" for userId: ${userId}, chatId: ${chatId}`);
+    console.log('[COMMAND] Parsed command:', cmd);
 
     try {
-      switch (cmd) {
-        case '/start':
-          console.log('[COMMAND] Executing /start');
-          await this.sendWelcome(chatId);
-          break;
-        case '/list':
-          console.log('[COMMAND] Executing /list');
-          await this.showRemindersList(userId, chatId);
-          break;
-        case '/settings':
-          console.log('[COMMAND] Executing /settings');
-          await this.showSettings(userId, chatId);
-          break;
-        case '/help':
-          console.log('[COMMAND] Executing /help');
-          await this.showHelp(chatId);
-          break;
-        default:
-          console.log(`[COMMAND] Unknown command: ${cmd}`);
-          await this.api.sendText(chatId, 'Неизвестная команда. Введите /help');
+      if (cmd === '/start') {
+        console.log('[COMMAND] -> Executing /start');
+        await this.sendWelcome(chatId);
+      } else if (cmd === '/list') {
+        console.log('[COMMAND] -> Executing /list');
+        await this.showRemindersList(userId, chatId);
+      } else if (cmd === '/settings') {
+        console.log('[COMMAND] -> Executing /settings');
+        await this.showSettings(userId, chatId);
+      } else if (cmd === '/help') {
+        console.log('[COMMAND] -> Executing /help');
+        await this.showHelp(chatId);
+      } else {
+        console.log('[COMMAND] -> Unknown command');
+        await this.api.sendText(chatId, 'Неизвестная команда. Введите /help');
       }
     } catch (error) {
-      console.error(`[COMMAND] Error executing ${cmd}:`, error);
+      console.error('[COMMAND] Error:', error);
       await this.api.sendText(chatId, 'Произошла ошибка. Попробуйте ещё раз.');
     }
+    
+    console.log('[COMMAND] === END ===');
   }
 
   /**
    * Handle callback (button press)
    */
   private async handleCallback(update: Update): Promise<void> {
-    console.log('[CALLBACK] ===== START CALLBACK HANDLING =====');
+    console.log('[CALLBACK] === START ===');
     
     const anyUpdate = update as any;
     
-    // Log the complete update structure
-    console.log('[CALLBACK] Complete update object:');
-    console.log(JSON.stringify(anyUpdate, null, 2));
-    
-    // Try to find callback object at various paths
-    let callbackObj: any = null;
+    // Ищем callback_id и payload в разных местах
     let callbackId: string = '';
     let payload: string = '';
+    let userId = 0;
+    let chatId = 0;
     
-    // Path 1: update.callback (expected MAX API structure)
+    // Путь 1: update.callback (ожидаемый формат MAX API)
     if (anyUpdate.callback) {
-      callbackObj = anyUpdate.callback;
-      console.log('[CALLBACK] Found callback at update.callback:', callbackObj);
+      callbackId = anyUpdate.callback.id || '';
+      payload = anyUpdate.callback.payload || '';
+      console.log('[CALLBACK] Found update.callback:', anyUpdate.callback);
     }
     
-    // Path 2: update.message_callback
-    if (!callbackObj && anyUpdate.message_callback) {
-      callbackObj = anyUpdate.message_callback;
-      console.log('[CALLBACK] Found callback at update.message_callback:', callbackObj);
-    }
-    
-    // Extract callback_id
-    if (callbackObj) {
-      callbackId = callbackObj.id || callbackObj.callback_id || '';
-      payload = callbackObj.payload || callbackObj.data || '';
-      console.log(`[CALLBACK] From callbackObj: id="${callbackId}", payload="${payload}"`);
-    }
-    
-    // Try additional paths for callback_id
-    if (!callbackId) {
-      callbackId = anyUpdate.callback_id || '';
-      console.log(`[CALLBACK] Trying update.callback_id: "${callbackId}"`);
-    }
-    
-    // Try additional paths for payload
-    if (!payload) {
-      payload = anyUpdate.payload || '';
-      console.log(`[CALLBACK] Trying update.payload: "${payload}"`);
-    }
-    
-    // Try to find payload in message markup buttons
-    if (!payload && anyUpdate.message?.markup) {
-      console.log('[CALLBACK] Searching in message.markup...');
-      const markup = anyUpdate.message.markup;
-      if (Array.isArray(markup)) {
-        for (const row of markup) {
-          if (Array.isArray(row)) {
-            for (const btn of row) {
-              if (btn && btn.payload) {
-                console.log(`[CALLBACK] Found payload in button: "${btn.payload}"`);
-                // This is just the button definition, not the clicked one
-              }
-            }
-          }
+    // Путь 2: ищем в message.attachments[].callback_id
+    if (!callbackId && anyUpdate.message?.attachments) {
+      for (const att of anyUpdate.message.attachments) {
+        if (att.callback_id) {
+          callbackId = att.callback_id;
+          console.log('[CALLBACK] Found callback_id in attachments:', callbackId);
+        }
+        // Payload может быть в нажатой кнопке
+        if (att.payload?.clicked_button?.payload) {
+          payload = att.payload.clicked_button.payload;
+          console.log('[CALLBACK] Found payload in clicked_button:', payload);
         }
       }
     }
     
-    // Extract user_id
-    let userId = 0;
-    if (update.sender?.user_id) {
-      userId = update.sender.user_id;
-      console.log(`[CALLBACK] userId from sender: ${userId}`);
+    // Путь 3: payload на верхнем уровне
+    if (!payload && anyUpdate.payload) {
+      payload = anyUpdate.payload;
+      console.log('[CALLBACK] Found payload at top level:', payload);
+    }
+    
+    // Извлекаем userId
+    if (anyUpdate.sender?.user_id) {
+      userId = anyUpdate.sender.user_id;
     } else if (anyUpdate.user?.user_id) {
       userId = anyUpdate.user.user_id;
-      console.log(`[CALLBACK] userId from user: ${userId}`);
     } else if (anyUpdate.message?.sender?.user_id) {
       userId = anyUpdate.message.sender.user_id;
-      console.log(`[CALLBACK] userId from message.sender: ${userId}`);
     }
+    console.log('[CALLBACK] userId:', userId);
     
-    // Extract chat_id
-    let chatId = 0;
+    // Извлекаем chatId
     if (anyUpdate.chat_id) {
       chatId = anyUpdate.chat_id;
-      console.log(`[CALLBACK] chatId from top-level: ${chatId}`);
     } else if (anyUpdate.message?.recipient?.chat_id) {
       chatId = anyUpdate.message.recipient.chat_id;
-      console.log(`[CALLBACK] chatId from message.recipient: ${chatId}`);
     } else if (anyUpdate.message?.chat_id) {
       chatId = anyUpdate.message.chat_id;
-      console.log(`[CALLBACK] chatId from message: ${chatId}`);
     }
+    console.log('[CALLBACK] chatId:', chatId);
     
-    console.log(`[CALLBACK] FINAL VALUES: userId=${userId}, chatId=${chatId}, payload="${payload}", callbackId="${callbackId}"`);
+    console.log('[CALLBACK] FINAL: callbackId=' + callbackId + ', payload=' + payload + ', userId=' + userId + ', chatId=' + chatId);
 
-    // Answer callback to remove loading state
+    // Отвечаем на callback
     if (callbackId) {
       try {
-        console.log(`[CALLBACK] Answering callback ${callbackId}...`);
         await this.api.answerCallback(callbackId);
-        console.log(`[CALLBACK] Answer callback OK`);
+        console.log('[CALLBACK] Answer callback OK');
       } catch (e) {
-        console.error('[CALLBACK] Failed to answer callback:', e);
+        console.error('[CALLBACK] Failed to answer:', e);
       }
-    } else {
-      console.log('[CALLBACK] No callbackId found - cannot answer callback');
     }
 
-    // If no payload found, try to find it anywhere in the object
     if (!payload) {
-      console.log('[CALLBACK] No payload found, searching recursively...');
+      console.log('[CALLBACK] No payload, searching recursively...');
       payload = this.findPayloadRecursive(anyUpdate, '') || '';
-      if (payload) {
-        console.log(`[CALLBACK] Found payload recursively: "${payload}"`);
-      }
     }
 
-    if (!payload) {
-      console.log('[CALLBACK] No payload found anywhere, aborting');
-      if (chatId) {
-        await this.api.sendText(chatId, 'Ошибка: не удалось определить действие');
-      }
+    if (!payload || !chatId) {
+      console.log('[CALLBACK] Missing payload or chatId, aborting');
       return;
     }
 
-    if (!chatId) {
-      console.log('[CALLBACK] No chatId, aborting');
-      return;
-    }
-
-    // Parse action and params
+    // Выполняем действие
     const [action, ...params] = payload.split(':');
-    console.log(`[CALLBACK] Executing action: "${action}", params: [${params.join(', ')}]`);
+    console.log('[CALLBACK] Action:', action, 'Params:', params);
 
     try {
       await this.executeCallbackAction(userId, chatId, action, params);
     } catch (error) {
-      console.error(`[CALLBACK] Error executing action ${action}:`, error);
-      await this.api.sendText(chatId, 'Произошла ошибка. Попробуйте ещё раз.');
+      console.error('[CALLBACK] Error:', error);
+      await this.api.sendText(chatId, 'Произошла ошибка.');
     }
     
-    console.log('[CALLBACK] ===== END CALLBACK HANDLING =====');
+    console.log('[CALLBACK] === END ===');
   }
 
   /**
    * Execute callback action
    */
   private async executeCallbackAction(userId: number, chatId: number, action: string, params: string[]): Promise<void> {
+    console.log('[ACTION] Executing:', action);
+    
     switch (action) {
       case 'add_reminder':
         await this.startAddReminder(userId, chatId);
@@ -414,36 +448,25 @@ export class PamPinBot {
       case 'dismiss':
         break;
       default:
-        console.log(`[CALLBACK] Unknown action: ${action}`);
+        console.log('[ACTION] Unknown action:', action);
         await this.showMainMenu(chatId);
     }
   }
 
   /**
-   * Find payload recursively in object
+   * Find payload recursively
    */
   private findPayloadRecursive(obj: any, path: string): string | null {
     if (!obj || typeof obj !== 'object') return null;
     
-    // Check for payload field (but not in button definitions which have type: 'callback')
-    if (typeof obj.payload === 'string' && obj.type !== 'callback') {
-      console.log(`[FIND] Found payload at ${path}.payload: "${obj.payload}"`);
-      return obj.payload;
+    if (typeof obj.payload === 'string' && obj.type !== 'callback' && obj.payload !== 'add_reminder') {
+      // Пропускаем определения кнопок
+      if (!obj.text) {
+        console.log('[FIND] Found payload at', path + '.payload:', obj.payload);
+        return obj.payload;
+      }
     }
     
-    // Check for query field
-    if (typeof obj.query === 'string') {
-      console.log(`[FIND] Found query at ${path}.query: "${obj.query}"`);
-      return obj.query;
-    }
-    
-    // Check for data field (but not in button definitions)
-    if (typeof obj.data === 'string' && obj.type !== 'callback') {
-      console.log(`[FIND] Found data at ${path}.data: "${obj.data}"`);
-      return obj.data;
-    }
-    
-    // Recurse into children
     for (const key of Object.keys(obj)) {
       const result = this.findPayloadRecursive(obj[key], path ? `${path}.${key}` : key);
       if (result) return result;
@@ -456,7 +479,7 @@ export class PamPinBot {
    * Send welcome message
    */
   private async sendWelcome(chatId: number): Promise<void> {
-    console.log(`[WELCOME] Sending welcome to chatId: ${chatId}`);
+    console.log('[WELCOME] chatId:', chatId);
     
     const text = `👋 *Добро пожаловать в PamPin!*
 
@@ -480,7 +503,7 @@ export class PamPinBot {
    * Show main menu
    */
   private async showMainMenu(chatId: number): Promise<void> {
-    console.log(`[MENU] Showing main menu to chatId: ${chatId}`);
+    console.log('[MENU] chatId:', chatId);
     
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
@@ -495,7 +518,7 @@ export class PamPinBot {
    * Start add reminder flow
    */
   private async startAddReminder(userId: number, chatId: number): Promise<void> {
-    console.log(`[ADD_REMINDER] Starting for userId: ${userId}, chatId: ${chatId}`);
+    console.log('[ADD_REMINDER] userId:', userId, 'chatId:', chatId);
     
     const settings = getUserSettings(userId, chatId);
     const tz = settings?.timezone || 'Europe/Moscow';
@@ -508,6 +531,8 @@ export class PamPinBot {
         temp_repeat: false
       }
     });
+    
+    console.log('[ADD_REMINDER] Session updated to waiting_for_title');
 
     await this.api.sendMessageWithKeyboard(
       chatId,
@@ -521,17 +546,20 @@ export class PamPinBot {
    * Handle title input
    */
   private async handleTitleInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    console.log(`[TITLE_INPUT] Title: "${text}"`);
+    console.log('[TITLE_INPUT] text:', text);
     
     if (text.length < 2) {
       await this.api.sendText(chatId, 'Слишком короткое название. Попробуйте ещё:');
       return;
     }
 
-    updateUserSession(userId, chatId, {
+    const newSession = updateUserSession(userId, chatId, {
       state: 'waiting_for_date',
       data: { ...session.data, temp_title: text }
     });
+    
+    console.log('[TITLE_INPUT] Session updated to waiting_for_date');
+    console.log('[TITLE_INPUT] New session:', JSON.stringify(newSession));
 
     const today = getTodayFormatted(session.data?.temp_timezone || 'Europe/Moscow');
     await this.api.sendMessageWithKeyboard(
@@ -546,7 +574,7 @@ export class PamPinBot {
    * Handle date input
    */
   private async handleDateInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    console.log(`[DATE_INPUT] Date: "${text}"`);
+    console.log('[DATE_INPUT] text:', text);
     
     const tz = session.data?.temp_timezone || 'Europe/Moscow';
     const date = parseDate(text, tz);
@@ -559,10 +587,10 @@ export class PamPinBot {
     if (isDateInPast(date, tz)) {
       await this.api.sendMessageWithKeyboard(
         chatId,
-        '⚠️ Эта дата уже прошла. Создать на следующий год?',
+        '⚠️ Эта дата уже прошла. Всё равно создать?',
         [
-          [callbackButton('✅ Да', `set_next_year:${date.toISOString()}`)],
-          [callbackButton('❌ Нет', 'cancel')]
+          [callbackButton('✅ Да', `confirm_date:${toISODateString(date)}`)],
+          [callbackButton('❌ Отмена', 'cancel')]
         ]
       );
       return;
@@ -572,10 +600,12 @@ export class PamPinBot {
       state: 'waiting_for_time',
       data: { ...session.data, temp_date: toISODateString(date) }
     });
+    
+    console.log('[DATE_INPUT] Session updated to waiting_for_time');
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      `✅ Дата: *${formatDate(date, 'long')}*\n\n🕐 Введите время (HH-MM):`,
+      `✅ Дата: *${formatDate(date, 'long')}*\n\n🕐 Введите время (HH-MM) или пропустите:`,
       [
         [callbackButton('⏭ Пропустить', 'skip_time')],
         [callbackButton('❌ Отмена', 'cancel')]
@@ -588,7 +618,7 @@ export class PamPinBot {
    * Handle time input
    */
   private async handleTimeInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    console.log(`[TIME_INPUT] Time: "${text}"`);
+    console.log('[TIME_INPUT] text:', text);
     
     const time = parseTime(text);
     if (!time) {
@@ -600,10 +630,12 @@ export class PamPinBot {
       state: 'waiting_for_description',
       data: { ...session.data, temp_time: formatTime(time.hours, time.minutes) }
     });
+    
+    console.log('[TIME_INPUT] Session updated to waiting_for_description');
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      `✅ Время: *${formatTime(time.hours, time.minutes)}*\n\n📝 Описание (или пропустите):`,
+      `✅ Время: *${formatTime(time.hours, time.minutes)}*\n\n📝 Введите описание или пропустите:`,
       [
         [callbackButton('⏭ Пропустить', 'skip_description')],
         [callbackButton('❌ Отмена', 'cancel')]
@@ -616,7 +648,7 @@ export class PamPinBot {
    * Handle description input
    */
   private async handleDescriptionInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    console.log(`[DESC_INPUT] Description: "${text}"`);
+    console.log('[DESC_INPUT] text:', text);
     
     updateUserSession(userId, chatId, {
       state: 'idle',
@@ -630,6 +662,7 @@ export class PamPinBot {
    * Skip time
    */
   private async skipTime(userId: number, chatId: number): Promise<void> {
+    console.log('[SKIP_TIME]');
     const session = getUserSession(userId, chatId);
     updateUserSession(userId, chatId, {
       state: 'waiting_for_description',
@@ -638,7 +671,7 @@ export class PamPinBot {
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      '📝 Описание (или пропустите):',
+      '📝 Введите описание или пропустите:',
       [[callbackButton('⏭ Пропустить', 'skip_description')]]
     );
   }
@@ -647,6 +680,7 @@ export class PamPinBot {
    * Skip description
    */
   private async skipDescription(userId: number, chatId: number): Promise<void> {
+    console.log('[SKIP_DESC]');
     const session = getUserSession(userId, chatId);
     updateUserSession(userId, chatId, {
       state: 'idle',
@@ -660,18 +694,23 @@ export class PamPinBot {
    * Show reminder preview
    */
   private async showPreview(chatId: number, data: UserSession['data']): Promise<void> {
-    console.log(`[PREVIEW] Showing preview`);
+    console.log('[PREVIEW] data:', JSON.stringify(data));
+    
+    if (!data) {
+      console.log('[PREVIEW] ERROR: No data!');
+      return;
+    }
     
     const date = data.temp_date ? new Date(data.temp_date) : new Date();
-    const periods = data.temp_periods || [];
+    const periods = data.temp_periods || [86400000];
     const periodLabels = periods.map(p => formatPeriod(p)).join(', ');
 
     const text = `📋 *Проверка*
 
-📌 *Название:* ${data.temp_title}
+📌 *Название:* ${data.temp_title || 'не указано'}
 📅 *Дата:* ${formatDate(date, 'long')}${data.temp_time ? ` в ${data.temp_time}` : ''}
 📝 *Описание:* ${data.temp_description || 'нет'}
-🔔 *Напомнить:* ${periodLabels || 'за 1 день'}
+🔔 *Напомнить:* ${periodLabels}
 🔄 *Повторять:* ${data.temp_repeat ? 'да' : 'нет'}`;
 
     const buttons: InlineKeyboardButton[][] = [
@@ -690,8 +729,7 @@ export class PamPinBot {
    * Show periods menu
    */
   private async showPeriodsMenu(userId: number, chatId: number): Promise<void> {
-    console.log(`[PERIODS] Showing periods menu`);
-    
+    console.log('[PERIODS_MENU]');
     const session = getUserSession(userId, chatId);
     const selected = session.data?.temp_periods || [];
 
@@ -708,8 +746,7 @@ export class PamPinBot {
    * Toggle period
    */
   private async togglePeriod(userId: number, chatId: number, idx: number): Promise<void> {
-    console.log(`[TOGGLE_PERIOD] Index: ${idx}`);
-    
+    console.log('[TOGGLE_PERIOD] idx:', idx);
     const session = getUserSession(userId, chatId);
     const periods = [...(session.data?.temp_periods || [])];
     const val = PREDEFINED_PERIODS[idx].value;
@@ -727,10 +764,6 @@ export class PamPinBot {
    */
   private async confirmPeriods(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
-    if ((session.data?.temp_periods?.length || 0) === 0) {
-      await this.api.sendText(chatId, 'Выберите хотя бы один период.');
-      return;
-    }
     await this.showPreview(chatId, session.data);
   }
 
@@ -738,8 +771,7 @@ export class PamPinBot {
    * Toggle repeat
    */
   private async toggleRepeat(userId: number, chatId: number): Promise<void> {
-    console.log(`[TOGGLE_REPEAT]`);
-    
+    console.log('[TOGGLE_REPEAT]');
     const session = getUserSession(userId, chatId);
     const newRepeat = !session.data?.temp_repeat;
     updateUserSession(userId, chatId, { data: { ...session.data, temp_repeat: newRepeat } });
@@ -750,13 +782,15 @@ export class PamPinBot {
    * Save reminder
    */
   private async saveReminder(userId: number, chatId: number): Promise<void> {
-    console.log(`[SAVE] Saving reminder`);
-    
+    console.log('[SAVE] userId:', userId, 'chatId:', chatId);
     const session = getUserSession(userId, chatId);
     const data = session.data;
 
+    console.log('[SAVE] Session data:', JSON.stringify(data));
+
     if (!data?.temp_title || !data?.temp_date) {
-      await this.api.sendText(chatId, 'Ошибка: недостаточно данных.');
+      console.log('[SAVE] ERROR: Missing title or date');
+      await this.api.sendText(chatId, 'Ошибка: недостаточно данных. Начните заново.');
       return;
     }
 
@@ -774,6 +808,8 @@ export class PamPinBot {
         is_active: true
       });
 
+      console.log('[SAVE] Reminder created:', reminder.id);
+      
       clearUserSession(userId, chatId);
 
       await this.api.sendMessageWithKeyboard(
@@ -786,7 +822,7 @@ export class PamPinBot {
         'markdown'
       );
     } catch (error) {
-      console.error('Save error:', error);
+      console.error('[SAVE] Error:', error);
       await this.api.sendText(chatId, 'Ошибка при сохранении.');
     }
   }
@@ -795,19 +831,21 @@ export class PamPinBot {
    * Show reminders list
    */
   private async showRemindersList(userId: number, chatId: number): Promise<void> {
-    console.log(`[LIST] Showing reminders for userId: ${userId}, chatId: ${chatId}`);
+    console.log('[LIST] userId:', userId, 'chatId:', chatId);
     
     const reminders = getRemindersByUser(userId, chatId);
-    console.log(`[LIST] Found ${reminders.length} reminders`);
+    console.log('[LIST] Found', reminders.length, 'reminders');
 
     if (reminders.length === 0) {
+      console.log('[LIST] No reminders, showing empty message');
       await this.api.sendMessageWithKeyboard(
         chatId,
-        '📭 У вас нет напоминаний.\n\nСоздать первое?',
+        '📭 *У вас пока нет напоминаний.*\n\nХотите создать первое?',
         [
-          [callbackButton('➕ Добавить', 'add_reminder')],
-          [callbackButton('📦 Архив', 'archived_reminders')]
-        ]
+          [callbackButton('➕ Создать', 'add_reminder')],
+          [callbackButton('🏠 Меню', 'main_menu')]
+        ],
+        'markdown'
       );
       return;
     }
@@ -823,7 +861,7 @@ export class PamPinBot {
     ]);
     buttons.push([
       callbackButton('➕ Добавить', 'add_reminder'),
-      callbackButton('📦 Архив', 'archived_reminders')
+      callbackButton('🏠 Меню', 'main_menu')
     ]);
 
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
@@ -833,8 +871,7 @@ export class PamPinBot {
    * Show archived list
    */
   private async showArchivedList(userId: number, chatId: number): Promise<void> {
-    console.log(`[ARCHIVE] Showing archived reminders`);
-    
+    console.log('[ARCHIVE_LIST]');
     const reminders = getArchivedRemindersByUser(userId, chatId);
 
     if (reminders.length === 0) {
@@ -866,8 +903,7 @@ export class PamPinBot {
    * Show reminder details
    */
   private async showReminderDetails(chatId: number, id: string): Promise<void> {
-    console.log(`[DETAILS] Showing reminder: ${id}`);
-    
+    console.log('[DETAILS] id:', id);
     const r = getReminderById(id);
     if (!r) {
       await this.api.sendText(chatId, 'Напоминание не найдено.');
@@ -988,8 +1024,7 @@ export class PamPinBot {
    * Show settings
    */
   private async showSettings(userId: number, chatId: number): Promise<void> {
-    console.log(`[SETTINGS] Showing settings`);
-    
+    console.log('[SETTINGS] userId:', userId, 'chatId:', chatId);
     const settings = getUserSettings(userId, chatId);
     const tz = settings?.timezone || 'Europe/Moscow';
     const tzInfo = SUPPORTED_TIMEZONES.find(t => t.value === tz);
@@ -1019,7 +1054,7 @@ export class PamPinBot {
     ]);
     buttons.push([callbackButton('◀️ Назад', 'settings')]);
 
-    await this.api.sendMessageWithKeyboard(chatId, '🌐 *Выберите пояс:*', buttons, 'markdown');
+    await this.api.sendMessageWithKeyboard(chatId, '🌐 *Выберите часовой пояс:*', buttons, 'markdown');
   }
 
   /**
@@ -1042,8 +1077,8 @@ export class PamPinBot {
 /settings — настройки
 
 *Форматы:*
-• Дата: DD/MM/YYYY
-• Время: HH-MM`;
+• Дата: DD/MM/YYYY (например 25/12/2026)
+• Время: HH-MM (например 14-30)`;
 
     await this.api.sendMessageWithKeyboard(
       chatId,
