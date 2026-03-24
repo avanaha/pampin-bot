@@ -2,12 +2,11 @@
 
 export interface User {
   user_id: number;
-  name: string;
+  name?: string;
   first_name?: string;
-  last_name?: string;
   username?: string;
-  is_bot: boolean;
-  last_activity_time: number;
+  is_bot?: boolean;
+  last_activity_time?: number;
 }
 
 export interface Chat {
@@ -19,30 +18,40 @@ export interface Chat {
   description?: string;
   members_count?: number;
   owner_id?: number;
+  administrators?: number[];
+  pinned_message?: Message;
+}
+
+export interface MessageRecipient {
+  chat_id: number;
+  chat_type: string;
+  user_id: number;
 }
 
 export interface MessageBody {
   mid: string;
-  seq: number;
-  text?: string;
-  attachments?: Attachment[];
+  text: string;
+  seq?: number;
 }
 
 export interface Message {
   message_id?: number;
   mid?: string;
   chat_id?: number;
-  recipient?: {
-    chat_id: number;
-    chat_type: string;
-    user_id: number;
-  };
+  recipient?: MessageRecipient;
   sender: User;
-  timestamp: number;
+  timestamp?: number;
   body?: MessageBody;
   text?: string;
   attachments?: Attachment[];
+  link?: MessageLink;
   format?: 'plain' | 'markdown' | 'html';
+  markup?: any[];
+}
+
+export interface MessageLink {
+  type: 'reply' | 'forward';
+  message?: Message;
 }
 
 export interface Attachment {
@@ -55,48 +64,85 @@ export interface InlineKeyboardButton {
   text: string;
   payload?: string;
   url?: string;
+  intent?: string;
+}
+
+export interface InlineKeyboardAttachment {
+  type: 'inline_keyboard';
+  payload: {
+    buttons: InlineKeyboardButton[][];
+  };
 }
 
 export interface NewMessageBody {
   text?: string;
   attachments?: Attachment[];
   format?: 'plain' | 'markdown' | 'html';
+  disable_web_page_preview?: boolean;
 }
 
-export interface Update {
-  update_type: string;
-  timestamp?: number;
-  message?: Message;
-  message_callback?: MessageCallback;
-  bot_started?: BotStarted;
-  user?: User;
-  user_id?: number;
-  chat_id?: number;
+export interface SendMessageRequest {
+  chat_id: number;
+  body: NewMessageBody;
 }
 
+// Message Callback - структура для обработки нажатий на кнопки
 export interface MessageCallback {
   callback_id: string;
   user: User;
   chat_id: number;
-  message: Message;
+  message?: Message;
   payload: string;
   timestamp?: number;
 }
 
-export interface BotStarted {
-  user: User;
-  user_id: number;
-  chat_id: number;
+// Структура callback из MAX API (реальная)
+export interface MaxCallback {
+  id?: string;
   payload?: string;
-  timestamp?: number;
+  data?: string;
 }
 
+export interface Update {
+  update_type: string;
+  update_id?: number;
+  timestamp?: number;
+  user_locale?: string;
+  message?: Message;
+  message_callback?: MessageCallback;
+  // Альтернативные поля для callback
+  callback?: MaxCallback;
+  sender?: User;
+  bot_started?: BotStarted;
+  user_added?: UserAdded;
+  chat_created?: ChatCreated;
+}
+
+export interface BotStarted {
+  user: User;
+  chat_id: number;
+  payload?: string;
+}
+
+export interface UserAdded {
+  user: User;
+  chat_id: number;
+  inviter: User;
+}
+
+export interface ChatCreated {
+  chat: Chat;
+  user: User;
+}
+
+// Subscription types
 export interface Subscription {
   url?: string;
   time: number;
   update_types?: string[];
 }
 
+// API Response
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
