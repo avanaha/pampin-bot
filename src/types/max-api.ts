@@ -1,8 +1,10 @@
-// MAX Bot API Types
+// MAX Bot API Types - Real API structure
 
 export interface User {
   user_id: number;
   name: string;
+  first_name?: string;
+  last_name?: string;
   username?: string;
   is_bot: boolean;
   last_activity_time: number;
@@ -21,11 +23,25 @@ export interface Chat {
   pinned_message?: Message;
 }
 
+export interface MessageBody {
+  mid: string;
+  seq: number;
+  text?: string;
+  attachments?: Attachment[];
+}
+
 export interface Message {
-  message_id: number;
-  chat_id: number;
+  message_id?: number;
+  mid?: string;
+  chat_id?: number;
+  recipient?: {
+    chat_id: number;
+    chat_type: string;
+    user_id: number;
+  };
   sender: User;
   timestamp: number;
+  body?: MessageBody;
   text?: string;
   attachments?: Attachment[];
   link?: MessageLink;
@@ -69,14 +85,20 @@ export interface SendMessageRequest {
   body: NewMessageBody;
 }
 
+// Real update structure from MAX API
 export interface Update {
   update_type: string;
-  update_id: number;
-  message?: Message;
+  timestamp?: number;
+  marker?: number;
+  message?: Message;           // For message_created
   message_callback?: MessageCallback;
   bot_started?: BotStarted;
   user_added?: UserAdded;
   chat_created?: ChatCreated;
+  user_id?: number;            // For bot_started
+  chat_id?: number;            // For bot_started  
+  user?: User;                 // For bot_started
+  user_locale?: string;
 }
 
 export interface MessageCallback {
@@ -85,12 +107,16 @@ export interface MessageCallback {
   chat_id: number;
   message: Message;
   payload: string;
+  timestamp?: number;
 }
 
 export interface BotStarted {
   user: User;
+  user_id: number;
   chat_id: number;
   payload?: string;
+  timestamp?: number;
+  user_locale?: string;
 }
 
 export interface UserAdded {
@@ -104,14 +130,12 @@ export interface ChatCreated {
   user: User;
 }
 
-// Subscription types
 export interface Subscription {
   url?: string;
   time: number;
   update_types?: string[];
 }
 
-// API Response
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
