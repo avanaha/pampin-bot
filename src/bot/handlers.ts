@@ -46,13 +46,20 @@ export class PamPinBot {
   }
 
   async processUpdate(update: Update): Promise<void> {
+    console.log('[PROCESS] Update type:', update.update_type);
+    console.log('[PROCESS] Full update:', JSON.stringify(update, null, 2));
+    
     try {
-      if (update.message) {
+      if (update.update_type === 'message_created' && update.message) {
         await this.handleMessage(update.message);
-      } else if (update.message_callback) {
+      } else if (update.update_type === 'message_callback' && update.message_callback) {
         await this.handleCallback(update.message_callback);
-      } else if (update.bot_started) {
-        await this.handleBotStarted(update.bot_started.user, update.bot_started.chat_id);
+      } else if (update.update_type === 'bot_started') {
+        // bot_started can have different structures
+        const userId = update.user?.user_id || update.user_id || 0;
+        const chatId = update.chat_id || 0;
+        console.log(`[PROCESS] Bot started: user_id=${userId}, chat_id=${chatId}`);
+        await this.handleBotStarted(update.user || { user_id: userId, name: 'User', is_bot: false, last_activity_time: 0 }, chatId);
       }
     } catch (error) {
       console.error('Error processing update:', error);
@@ -65,6 +72,8 @@ export class PamPinBot {
   }
 
   private async handleBotStarted(user: any, chatId: number): Promise<void> {
+    console.log(`[BOT_STARTED] Chat ID: ${chatId}`);
+    
     const welcomeText = `
 👋 *Добро пожаловать в PamPin!*
 
@@ -99,11 +108,14 @@ export class PamPinBot {
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    const userId = message.sender.user_id;
-    const chatId = message.chat_id;
-    const text = message.text?.trim();
+    // Extract data from real MAX API structure
+    const userId = message.sender?.user_id || 0;
+    const chatId = message.recipient?.chat_id || message.chat_id || 0;
+    const text = message.body?.text || message.text || '';
+    
+    console.log(`[MESSAGE] User: ${userId}, Chat: ${chatId}, Text: "${text}"`);
 
-    if (!text) return;
+    if (!text.trim()) return;
 
     const session = getUserSession(userId, chatId);
 
@@ -132,10 +144,11 @@ export class PamPinBot {
 
   private async handleCommand(userId: number, chatId: number, command: string): Promise<void> {
     const cmd = command.toLowerCase().split(' ')[0];
+    console.log(`[COMMAND] ${cmd} from user ${userId}`);
 
     switch (cmd) {
       case '/start':
-        await this.handleBotStarted({ user_id: userId }, chatId);
+        await this.handleBotStarted({ user_id: userId, name: 'User', is_bot: false, last_activity_time: 0 }, chatId);
         break;
       case '/list':
         await this.showRemindersList(userId, chatId);
@@ -156,7 +169,7 @@ export class PamPinBot {
     const chatId = callback.chat_id;
     const payload = callback.payload;
 
-    console.log(`[CALLBACK] User ${userId}, payload: ${payload}`);
+    console.log(`[CALLBACK] User ${userId}, Chat ${chatId}, payload: ${payload}`);
 
     try {
       await this.api.answerCallback(callback.callback_id);
@@ -678,19 +691,10 @@ export class PamPinBot {
 • 14-30 — 14:30 (основной)
 • 14:30 — альтернатива
 
-*Периоды напоминаний:*
-Можно выбрать несколько:
-• за 3 месяца, за 1 месяц
-• за 1 неделю, за 3 дня, за 1 день
-• за 1 час, за 30 минут
-
-*Ежегодное повторение:*
-Включите для повторяющихся событий (дни рождения, годовщины).
-
 *Команды:*
 /start — главное меню
 /list — список напоминаний
-/settings — настройки (часовой пояс)
+/settings — настройки
 /help — эта справка
 `;
 
