@@ -7,7 +7,7 @@ export interface Reminder {
   title: string;
   description?: string;
   event_date: string; // ISO date string YYYY-MM-DD
-  event_time?: string; // HH-mm or HH:mm
+  event_time?: string; // HH:mm
   timezone: string;
   reminder_periods: number[]; // periods in milliseconds before event
   repeat_yearly: boolean;
@@ -63,8 +63,8 @@ export const PREDEFINED_PERIODS: { value: number; label: string }[] = [
   { value: 30 * 60 * 1000, label: 'за 30 минут' },
 ];
 
-// Session states for conversation flow
-export type SessionState = 
+// Bot states for conversation flow
+export type BotState = 
   | 'idle'
   | 'waiting_for_title'
   | 'waiting_for_date'
@@ -72,12 +72,14 @@ export type SessionState =
   | 'waiting_for_description'
   | 'waiting_for_periods'
   | 'waiting_for_timezone'
-  | 'waiting_for_repeat';
+  | 'waiting_for_repeat'
+  | 'editing_reminder'
+  | 'selecting_reminder';
 
 export interface UserSession {
   user_id: number;
   chat_id: number;
-  state: SessionState;
+  state: BotState;
   data: {
     editing_reminder_id?: string;
     temp_title?: string;
