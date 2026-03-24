@@ -86,7 +86,45 @@ export interface SendMessageRequest {
   body: NewMessageBody;
 }
 
-// Message Callback - структура для обработки нажатий на кнопки
+/**
+ * Callback object structure from MAX API
+ * When a user clicks a callback button, MAX sends this structure
+ */
+export interface Callback {
+  /** Unique identifier for this callback */
+  id: string;
+  /** Payload from the button that was clicked */
+  payload: string;
+}
+
+/**
+ * Message Callback update structure
+ * This is the structure sent when a user clicks an inline button
+ * 
+ * According to MAX API documentation:
+ * https://dev.max.ru/rest-api/messages/callbacks/
+ * 
+ * When user clicks callback button, you receive:
+ * {
+ *   "update_type": "message_callback",
+ *   "callback": {
+ *     "id": "callback_id_string",
+ *     "payload": "button_payload_string"
+ *   },
+ *   "timestamp": 1234567890,
+ *   "sender": { "user_id": 123, ... },
+ *   "message": { ... original message ... }
+ * }
+ */
+export interface MessageCallbackUpdate {
+  update_type: 'message_callback';
+  callback: Callback;
+  timestamp: number;
+  sender: User;
+  message?: Message;
+}
+
+// Legacy types kept for backward compatibility
 export interface MessageCallback {
   callback_id: string;
   user: User;
@@ -96,7 +134,6 @@ export interface MessageCallback {
   timestamp?: number;
 }
 
-// Структура callback из MAX API (реальная)
 export interface MaxCallback {
   id?: string;
   payload?: string;
@@ -110,8 +147,8 @@ export interface Update {
   user_locale?: string;
   message?: Message;
   message_callback?: MessageCallback;
-  // Альтернативные поля для callback
-  callback?: MaxCallback;
+  // Primary callback field - this is where MAX sends callback data
+  callback?: Callback;
   sender?: User;
   bot_started?: BotStarted;
   user_added?: UserAdded;
