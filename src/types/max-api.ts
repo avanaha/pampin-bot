@@ -1,4 +1,5 @@
 // MAX Bot API Types
+// Documentation: https://dev.max.ru/
 
 export interface User {
   user_id: number;
@@ -39,7 +40,7 @@ export interface Message {
   mid?: string;
   chat_id?: number;
   recipient?: MessageRecipient;
-  sender: User;
+  sender?: User;
   timestamp?: number;
   body?: MessageBody;
   text?: string;
@@ -57,6 +58,7 @@ export interface MessageLink {
 export interface Attachment {
   type: string;
   payload: any;
+  callback_id?: string;
 }
 
 export interface InlineKeyboardButton {
@@ -86,58 +88,9 @@ export interface SendMessageRequest {
   body: NewMessageBody;
 }
 
-/**
- * Callback object structure from MAX API
- * When a user clicks a callback button, MAX sends this structure
- */
 export interface Callback {
-  /** Unique identifier for this callback */
   id: string;
-  /** Payload from the button that was clicked */
   payload: string;
-}
-
-/**
- * Message Callback update structure
- * This is the structure sent when a user clicks an inline button
- * 
- * According to MAX API documentation:
- * https://dev.max.ru/rest-api/messages/callbacks/
- * 
- * When user clicks callback button, you receive:
- * {
- *   "update_type": "message_callback",
- *   "callback": {
- *     "id": "callback_id_string",
- *     "payload": "button_payload_string"
- *   },
- *   "timestamp": 1234567890,
- *   "sender": { "user_id": 123, ... },
- *   "message": { ... original message ... }
- * }
- */
-export interface MessageCallbackUpdate {
-  update_type: 'message_callback';
-  callback: Callback;
-  timestamp: number;
-  sender: User;
-  message?: Message;
-}
-
-// Legacy types kept for backward compatibility
-export interface MessageCallback {
-  callback_id: string;
-  user: User;
-  chat_id: number;
-  message?: Message;
-  payload: string;
-  timestamp?: number;
-}
-
-export interface MaxCallback {
-  id?: string;
-  payload?: string;
-  data?: string;
 }
 
 export interface Update {
@@ -147,7 +100,6 @@ export interface Update {
   user_locale?: string;
   message?: Message;
   message_callback?: MessageCallback;
-  // Primary callback field - this is where MAX sends callback data
   callback?: Callback;
   sender?: User;
   bot_started?: BotStarted;
@@ -172,14 +124,21 @@ export interface ChatCreated {
   user: User;
 }
 
-// Subscription types
+export interface MessageCallback {
+  callback_id: string;
+  user: User;
+  chat_id: number;
+  message?: Message;
+  payload: string;
+  timestamp?: number;
+}
+
 export interface Subscription {
   url?: string;
   time: number;
   update_types?: string[];
 }
 
-// API Response
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
