@@ -62,7 +62,7 @@ export class MaxApi {
       const responseText = await response.text();
       
       console.log(`[API] Response status: ${response.status}`);
-      console.log(`[API] Response: ${responseText.substring(0, 500)}`);
+      console.log(`[API] Response body: ${responseText.substring(0, 1000)}`);
 
       let data;
       try {
@@ -134,6 +134,7 @@ export class MaxApi {
     text: string, 
     format: 'plain' | 'markdown' | 'html' = 'plain'
   ): Promise<Message> {
+    console.log(`[SEND_TEXT] chatId=${chatId}, text="${text.substring(0, 50)}..."`);
     return this.sendMessage(chatId, { text, format });
   }
 
@@ -157,6 +158,7 @@ export class MaxApi {
     buttons: InlineKeyboardButton[][],
     format: 'plain' | 'markdown' | 'html' = 'plain'
   ): Promise<Message> {
+    console.log(`[SEND_KEYBOARD] chatId=${chatId}, buttons=${buttons.length} rows`);
     return this.sendMessage(chatId, {
       text,
       format,
@@ -209,16 +211,23 @@ export class MaxApi {
   }
 
   /**
-   * Answer callback (callback_id in query params)
+   * Answer callback query
+   * 
+   * According to MAX API documentation:
+   * POST /answers?callback_id={callback_id}
+   * 
+   * This removes the loading animation from the button
    */
-  async answerCallback(callbackId: string, notificationText?: string): Promise<void> {
-    // callback_id must be in query params!
+  async answerCallback(callbackId: string, notification?: string): Promise<void> {
     let endpoint = `/answers?callback_id=${encodeURIComponent(callbackId)}`;
+    if (notification) {
+      endpoint += `&notification=${encodeURIComponent(notification)}`;
+    }
     
-    console.log(`[API] Answering callback: ${callbackId}`);
+    console.log(`[ANSWER_CALLBACK] callbackId=${callbackId}`);
     
-    // Send empty body - notification text is optional
     await this.request<void>('POST', endpoint, {});
+    console.log(`[ANSWER_CALLBACK] Success`);
   }
 
   /**
