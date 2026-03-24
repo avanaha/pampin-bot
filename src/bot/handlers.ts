@@ -46,23 +46,31 @@ export class PamPinBot {
   }
 
   async processUpdate(update: Update): Promise<void> {
-    console.log('[PROCESS] Update type:', update.update_type);
-    console.log('[PROCESS] Full update:', JSON.stringify(update, null, 2));
+    const updateType = update.update_type;
+    console.log(`[PROCESS] Update type: ${updateType}`);
     
     try {
-      if (update.update_type === 'message_created' && update.message) {
+      if (updateType === 'message_created' && update.message) {
+        // Skip messages from bot itself
+        if (update.message.sender?.is_bot === true) {
+          console.log('[PROCESS] Skipping message from bot');
+          return;
+        }
         await this.handleMessage(update.message);
-      } else if (update.update_type === 'message_callback' && update.message_callback) {
+      } else if (updateType === 'message_callback' && update.message_callback) {
+        console.log('[PROCESS] Callback data:', JSON.stringify(update.message_callback, null, 2));
         await this.handleCallback(update.message_callback);
-      } else if (update.update_type === 'bot_started') {
-        // bot_started can have different structures
+      } else if (updateType === 'bot_started') {
         const userId = update.user?.user_id || update.user_id || 0;
         const chatId = update.chat_id || 0;
         console.log(`[PROCESS] Bot started: user_id=${userId}, chat_id=${chatId}`);
-        await this.handleBotStarted(update.user || { user_id: userId, name: 'User', is_bot: false, last_activity_time: 0 }, chatId);
+        await this.handleBotStarted(
+          update.user || { user_id: userId, name: 'User', is_bot: false, last_activity_time: 0 }, 
+          chatId
+        );
       }
     } catch (error) {
-      console.error('Error processing update:', error);
+      console.error('[PROCESS] Error:', error);
     }
   }
 
@@ -85,12 +93,6 @@ export class PamPinBot {
 • Повторять напоминания ежегодно
 • Работать с разными часовыми поясами
 
-*Как создать напоминание:*
-1. Нажми "➕ Добавить напоминание"
-2. Введи название события
-3. Укажи дату и время
-4. Выбери периоды напоминаний
-
 *Команды:*
 /start — показать это сообщение
 /list — список ваших напоминаний
@@ -108,14 +110,13 @@ export class PamPinBot {
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    // Extract data from real MAX API structure
     const userId = message.sender?.user_id || 0;
     const chatId = message.recipient?.chat_id || message.chat_id || 0;
-    const text = message.body?.text || message.text || '';
+    const text = (message.body?.text || message.text || '').trim();
     
     console.log(`[MESSAGE] User: ${userId}, Chat: ${chatId}, Text: "${text}"`);
 
-    if (!text.trim()) return;
+    if (!text) return;
 
     const session = getUserSession(userId, chatId);
 
@@ -143,8 +144,8 @@ export class PamPinBot {
   }
 
   private async handleCommand(userId: number, chatId: number, command: string): Promise<void> {
-    const cmd = command.toLowerCase().split(' ')[0];
-    console.log(`[COMMAND] ${cmd} from user ${userId}`);
+    const cmd = command.toLowerCase().split(' ')[0].trim();
+    console.log(`[COMMAND] "${cmd}" from user ${userId}`);
 
     switch (cmd) {
       case '/start':
@@ -165,19 +166,26 @@ export class PamPinBot {
   }
 
   private async handleCallback(callback: MessageCallback): Promise<void> {
-    const userId = callback.user.user_id;
-    const chatId = callback.chat_id;
-    const payload = callback.payload;
+    const userId = callback.user?.user_id || 0;
+    const chatId = callback.chat_id || 0;
+    const payload = callback.payload || '';
 
-    console.log(`[CALLBACK] User ${userId}, Chat ${chatId}, payload: ${payload}`);
+    console.log(`[CALLBACK] User: ${userId}, Chat: ${chatId}, Payload: "${payload}"`);
 
+    // Answer callback first
     try {
       await this.api.answerCallback(callback.callback_id);
+      console.log('[CALLBACK] Answered callback');
     } catch (e) {
-      console.error('Failed to answer callback:', e);
+      console.error('[CALLBACK] Failed to answer:', e);
     }
 
-    const [action, ...params] = payload.split(':');
+    // Parse callback data
+    const parts = payload.split(':');
+    const action = parts[0] || '';
+    const params = parts.slice(1);
+
+    console.log(`[CALLBACK] Action: "${action}", Params:`, params);
 
     switch (action) {
       case 'add_reminder':
@@ -198,6 +206,12 @@ export class PamPinBot {
       case 'confirm_delete':
         await this.executeDeleteReminder(userId, chatId, params[0]);
         break;
+      case 'archive_reminder':
+        await this.archiveReminder(userId, chatId, params[0]);
+        break;
+      case 'restore_reminder':
+        await this.restoreReminder(userId, chatId, params[0]);
+        break;
       case 'cancel':
         clearUserSession(userId, chatId);
         await this.showMainMenu(chatId);
@@ -215,7 +229,7 @@ export class PamPinBot {
         await this.showPeriodSelection(userId, chatId);
         break;
       case 'toggle_period':
-        await this.togglePeriod(userId, chatId, parseInt(params[0]));
+        await this.togglePeriod(userId, chatId, parseInt(params[0]) || 0);
         break;
       case 'confirm_periods':
         await this.confirmPeriods(userId, chatId);
@@ -243,6 +257,8 @@ export class PamPinBot {
         break;
       case 'dismiss':
         break;
+      default:
+        console.log(`[CALLBACK] Unknown action: ${action}`);
     }
   }
 
@@ -421,7 +437,9 @@ export class PamPinBot {
   private async togglePeriod(userId: number, chatId: number, periodIndex: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const periods = [...(session.data.temp_periods || [])];
-    const periodValue = PREDEFINED_PERIODS[periodIndex].value;
+    const periodValue = PREDEFINED_PERIODS[periodIndex]?.value;
+
+    if (!periodValue) return;
 
     const existingIndex = periods.indexOf(periodValue);
     if (existingIndex >= 0) {
@@ -465,7 +483,7 @@ export class PamPinBot {
     const session = getUserSession(userId, chatId);
     const data = session.data;
 
-    console.log('[CONFIRM] Session data:', JSON.stringify(data, null, 2));
+    console.log('[CONFIRM] Creating reminder with data:', JSON.stringify(data, null, 2));
 
     if (!data.temp_title || !data.temp_date) {
       await this.api.sendText(chatId, 'Ошибка: недостаточно данных для создания напоминания.');
@@ -486,7 +504,7 @@ export class PamPinBot {
         is_active: true
       });
 
-      console.log('[CONFIRM] Reminder created:', JSON.stringify(reminder, null, 2));
+      console.log('[CONFIRM] Reminder created:', reminder.id);
 
       clearUserSession(userId, chatId);
 
@@ -502,21 +520,21 @@ export class PamPinBot {
 
       await this.notifyGroup(reminder);
     } catch (error) {
-      console.error('[CONFIRM] Error creating reminder:', error);
+      console.error('[CONFIRM] Error:', error);
       await this.api.sendText(chatId, 'Ошибка при создании напоминания. Попробуйте ещё раз.');
     }
   }
 
   private async showRemindersList(userId: number, chatId: number): Promise<void> {
     const reminders = getRemindersByUser(userId, chatId);
-
     console.log(`[LIST] Found ${reminders.length} reminders for user ${userId}`);
 
     if (reminders.length === 0) {
       await this.api.sendMessageWithKeyboard(
         chatId,
-        '📭 У вас пока нет напоминаний.\n\nХотите создать первое?',
-        [[callbackButton('➕ Добавить напоминание', 'add_reminder')]]
+        '📭 *У вас пока нет напоминаний.*\n\nХотите создать первое?',
+        [[callbackButton('➕ Добавить напоминание', 'add_reminder')]],
+        'markdown'
       );
       return;
     }
@@ -567,6 +585,7 @@ export class PamPinBot {
 
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('✏️ Редактировать', `edit_reminder:${reminderId}`)],
+      [callbackButton('📦 В архив', `archive_reminder:${reminderId}`)],
       [callbackButton('🗑 Удалить', `delete_reminder:${reminderId}`)],
       [callbackButton('◀️ Назад', 'list_reminders')]
     ];
@@ -584,7 +603,7 @@ export class PamPinBot {
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      `⚠️ *Подтверждение удаления*\n\nВы уверены, что хотите удалить напоминание "${reminder.title}"?`,
+      `⚠️ *Удалить напоминание?*\n\n"${reminder.title}"\n\nЭто действие необратимо.`,
       [
         [callbackButton('✅ Да, удалить', `confirm_delete:${reminderId}`)],
         [callbackButton('❌ Отмена', `view_reminder:${reminderId}`)]
@@ -608,6 +627,29 @@ export class PamPinBot {
     } else {
       await this.api.sendText(chatId, 'Ошибка при удалении напоминания.');
     }
+  }
+
+  private async archiveReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
+    // For now, same as delete (is_active = 0)
+    const success = deleteReminder(reminderId);
+    
+    if (success) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '📦 Напоминание отправлено в архив.',
+        [
+          [callbackButton('📋 Мои напоминания', 'list_reminders')],
+          [callbackButton('➕ Добавить новое', 'add_reminder')]
+        ]
+      );
+    } else {
+      await this.api.sendText(chatId, 'Ошибка при архивации напоминания.');
+    }
+  }
+
+  private async restoreReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
+    // TODO: Implement restore from archive
+    await this.api.sendText(chatId, 'Функция восстановления пока не реализована.');
   }
 
   private async showSettings(userId: number, chatId: number): Promise<void> {
@@ -685,11 +727,9 @@ export class PamPinBot {
 *Форматы даты:*
 • 25/03/2026 — 25 марта 2026
 • 25.03.2026 — альтернатива
-• 25 марта 2026 — текстом
 
 *Форматы времени:*
 • 14-30 — 14:30 (основной)
-• 14:30 — альтернатива
 
 *Команды:*
 /start — главное меню
