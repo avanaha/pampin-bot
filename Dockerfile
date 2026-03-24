@@ -2,20 +2,26 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++ sqlite
+# Install build dependencies for better-sqlite3
+RUN apk add --no-cache python3 make g++
 
+# Copy package files
 COPY package*.json ./
 
-RUN npm install
+# Install dependencies
+RUN npm ci --only=production
 
+# Copy source code
 COPY . .
 
+# Build TypeScript
 RUN npm run build
 
-RUN npm prune --production
-
+# Create data directory
 RUN mkdir -p /app/data
 
+# Set environment
 ENV NODE_ENV=production
 
+# Run the bot
 CMD ["node", "dist/index.js"]
