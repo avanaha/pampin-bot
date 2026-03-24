@@ -9,13 +9,12 @@ import {
   Reminder, 
   UserSession, 
   PREDEFINED_PERIODS,
-  BotState 
+  SessionState 
 } from '../types';
 import {
   getReminderById,
   getRemindersByUser,
   createReminder,
-  updateReminder,
   deleteReminder,
   getUserSettings,
   upsertUserSettings,
@@ -46,9 +45,6 @@ export class PamPinBot {
     this.groupId = groupId;
   }
 
-  /**
-   * Process incoming update
-   */
   async processUpdate(update: Update): Promise<void> {
     try {
       if (update.message) {
@@ -63,17 +59,11 @@ export class PamPinBot {
     }
   }
 
-  /**
-   * Get user's timezone from settings or session
-   */
   private getUserTimezone(userId: number, chatId: number, sessionData?: UserSession['data']): string {
     const settings = getUserSettings(userId, chatId);
     return settings?.timezone || sessionData?.temp_timezone || 'Europe/Moscow';
   }
 
-  /**
-   * Handle bot started event
-   */
   private async handleBotStarted(user: any, chatId: number): Promise<void> {
     const welcomeText = `
 👋 *Добро пожаловать в PamPin!*
@@ -108,9 +98,6 @@ export class PamPinBot {
     await this.api.sendMessageWithKeyboard(chatId, welcomeText, buttons, 'markdown');
   }
 
-  /**
-   * Handle incoming message
-   */
   private async handleMessage(message: Message): Promise<void> {
     const userId = message.sender.user_id;
     const chatId = message.chat_id;
@@ -118,16 +105,13 @@ export class PamPinBot {
 
     if (!text) return;
 
-    // Get user session
     const session = getUserSession(userId, chatId);
 
-    // Handle commands
     if (text.startsWith('/')) {
       await this.handleCommand(userId, chatId, text);
       return;
     }
 
-    // Handle state-based input
     switch (session.state) {
       case 'waiting_for_title':
         await this.handleTitleInput(userId, chatId, text, session);
@@ -141,18 +125,11 @@ export class PamPinBot {
       case 'waiting_for_description':
         await this.handleDescriptionInput(userId, chatId, text, session);
         break;
-      case 'waiting_for_timezone':
-        await this.handleTimezoneInput(userId, chatId, text, session);
-        break;
       default:
-        // Unknown input in idle state
         await this.showMainMenu(chatId);
     }
   }
 
-  /**
-   * Handle command
-   */
   private async handleCommand(userId: number, chatId: number, command: string): Promise<void> {
     const cmd = command.toLowerCase().split(' ')[0];
 
@@ -174,9 +151,6 @@ export class PamPinBot {
     }
   }
 
-  /**
-   * Handle callback query
-   */
   private async handleCallback(callback: MessageCallback): Promise<void> {
     const userId = callback.user.user_id;
     const chatId = callback.chat_id;
@@ -184,14 +158,12 @@ export class PamPinBot {
 
     console.log(`[CALLBACK] User ${userId}, payload: ${payload}`);
 
-    // Answer callback to remove loading state
     try {
       await this.api.answerCallback(callback.callback_id);
     } catch (e) {
       console.error('Failed to answer callback:', e);
     }
 
-    // Parse callback data
     const [action, ...params] = payload.split(':');
 
     switch (action) {
@@ -257,22 +229,17 @@ export class PamPinBot {
         await this.retryDate(userId, chatId);
         break;
       case 'dismiss':
-        // Just acknowledge, no action needed
         break;
     }
   }
 
-  /**
-   * Start add reminder flow
-   */
   private async startAddReminder(userId: number, chatId: number): Promise<void> {
     const timezone = this.getUserTimezone(userId, chatId);
-    const todayStr = getTodayFormatted(timezone);
     
     updateUserSession(userId, chatId, { 
       state: 'waiting_for_title',
       data: { 
-        temp_periods: [86400000], // Default: 1 day
+        temp_periods: [86400000],
         temp_timezone: timezone,
         temp_repeat: false
       }
@@ -286,9 +253,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Handle title input
-   */
   private async handleTitleInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     if (text.length < 2 || text.length > 200) {
       await this.api.sendText(chatId, 'Название должно быть от 2 до 200 символов. Попробуйте ещё раз:');
@@ -311,9 +275,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Handle date input
-   */
   private async handleDateInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     const timezone = this.getUserTimezone(userId, chatId, session.data);
     
@@ -357,9 +318,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Handle time input
-   */
   private async handleTimeInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     const time = parseTime(text);
 
@@ -387,9 +345,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Handle description input
-   */
   private async handleDescriptionInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     updateUserSession(userId, chatId, {
       state: 'idle',
@@ -399,14 +354,11 @@ export class PamPinBot {
     await this.showReminderPreview(chatId, session.data);
   }
 
-  /**
-   * Show reminder preview
-   */
   private async showReminderPreview(chatId: number, sessionData: UserSession['data']): Promise<void> {
     const date = sessionData.temp_date ? new Date(sessionData.temp_date) : new Date();
     const timeStr = sessionData.temp_time || '';
     const periods = sessionData.temp_periods || [];
-    const periodLabels = periods.map(p => formatPeriod(p)).join(', ');
+    const periodLabels = periods.map((p: number) => formatPeriod(p)).join(', ');
 
     const text = `
 📋 *Проверьте напоминание*
@@ -432,9 +384,6 @@ export class PamPinBot {
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  /**
-   * Show period selection
-   */
   private async showPeriodSelection(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const selectedPeriods = session.data.temp_periods || [];
@@ -456,9 +405,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Toggle period selection
-   */
   private async togglePeriod(userId: number, chatId: number, periodIndex: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const periods = [...(session.data.temp_periods || [])];
@@ -469,7 +415,7 @@ export class PamPinBot {
       periods.splice(existingIndex, 1);
     } else {
       periods.push(periodValue);
-      periods.sort((a, b) => b - a); // Sort descending (largest first)
+      periods.sort((a, b) => b - a);
     }
 
     updateUserSession(userId, chatId, {
@@ -479,9 +425,6 @@ export class PamPinBot {
     await this.showPeriodSelection(userId, chatId);
   }
 
-  /**
-   * Confirm periods selection
-   */
   private async confirmPeriods(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const periods = session.data.temp_periods || [];
@@ -494,9 +437,6 @@ export class PamPinBot {
     await this.showReminderPreview(chatId, session.data);
   }
 
-  /**
-   * Toggle repeat yearly
-   */
   private async toggleRepeat(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const newRepeat = !session.data.temp_repeat;
@@ -508,9 +448,6 @@ export class PamPinBot {
     await this.showReminderPreview(chatId, { ...session.data, temp_repeat: newRepeat });
   }
 
-  /**
-   * Confirm and create reminder
-   */
   private async confirmReminder(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     const data = session.data;
@@ -550,7 +487,6 @@ export class PamPinBot {
         'markdown'
       );
 
-      // Also notify the group
       await this.notifyGroup(reminder);
     } catch (error) {
       console.error('[CONFIRM] Error creating reminder:', error);
@@ -558,9 +494,6 @@ export class PamPinBot {
     }
   }
 
-  /**
-   * Show reminders list
-   */
   private async showRemindersList(userId: number, chatId: number): Promise<void> {
     const reminders = getRemindersByUser(userId, chatId);
 
@@ -595,9 +528,6 @@ export class PamPinBot {
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  /**
-   * Show reminder details
-   */
   private async showReminderDetails(chatId: number, reminderId: string): Promise<void> {
     const reminder = getReminderById(reminderId);
     
@@ -631,9 +561,6 @@ export class PamPinBot {
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  /**
-   * Confirm delete reminder
-   */
   private async confirmDeleteReminder(chatId: number, reminderId: string): Promise<void> {
     const reminder = getReminderById(reminderId);
     
@@ -653,9 +580,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Execute delete reminder (archive)
-   */
   private async executeDeleteReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
     const success = deleteReminder(reminderId);
     
@@ -673,9 +597,6 @@ export class PamPinBot {
     }
   }
 
-  /**
-   * Show settings
-   */
   private async showSettings(userId: number, chatId: number): Promise<void> {
     const settings = getUserSettings(userId, chatId);
     const timezone = settings?.timezone || 'Europe/Moscow';
@@ -699,9 +620,6 @@ export class PamPinBot {
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  /**
-   * Show timezone selection
-   */
   private async showTimezoneSelection(chatId: number): Promise<void> {
     const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map(tz => [
       callbackButton(tz.label, `set_timezone:${tz.value}`)
@@ -716,17 +634,11 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Set timezone
-   */
   private async setTimezone(userId: number, chatId: number, timezone: string): Promise<void> {
     upsertUserSettings({ user_id: userId, chat_id: chatId, timezone });
     await this.showSettings(userId, chatId);
   }
 
-  /**
-   * Show main menu
-   */
   private async showMainMenu(chatId: number): Promise<void> {
     await this.api.sendMessageWithKeyboard(
       chatId,
@@ -740,9 +652,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Show help
-   */
   private async showHelp(chatId: number): Promise<void> {
     const text = `
 📚 *Справка по PamPin*
@@ -793,9 +702,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Notify group about new reminder
-   */
   private async notifyGroup(reminder: Reminder): Promise<void> {
     const date = new Date(reminder.event_date);
     const timeStr = reminder.event_time ? ` в ${reminder.event_time}` : '';
@@ -815,9 +721,6 @@ export class PamPinBot {
     }
   }
 
-  /**
-   * Send reminder notification
-   */
   async sendReminderNotification(reminder: Reminder, periodMs: number): Promise<void> {
     const date = new Date(reminder.event_date);
     const timeStr = reminder.event_time ? ` в ${reminder.event_time}` : '';
@@ -839,19 +742,13 @@ export class PamPinBot {
     ];
 
     try {
-      // Send to user
       await this.api.sendMessageWithKeyboard(reminder.chat_id, text, buttons, 'markdown');
-      
-      // Also send to group
       await this.api.sendText(this.groupId, `📤 Напоминание отправлено пользователю:\n\n${text}`, 'markdown');
     } catch (error) {
       console.error('Failed to send reminder notification:', error);
     }
   }
 
-  /**
-   * Skip time input
-   */
   private async skipTime(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     updateUserSession(userId, chatId, {
@@ -869,9 +766,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Skip description input
-   */
   private async skipDescription(userId: number, chatId: number): Promise<void> {
     const session = getUserSession(userId, chatId);
     updateUserSession(userId, chatId, {
@@ -882,19 +776,14 @@ export class PamPinBot {
     await this.showReminderPreview(chatId, session.data);
   }
 
-  /**
-   * Set date to next year
-   */
   private async setDateNextYear(userId: number, chatId: number, dateStr: string): Promise<void> {
     const session = getUserSession(userId, chatId);
     const originalDate = new Date(dateStr);
     const now = new Date();
     
-    // Set to next year occurrence
     const nextYearDate = new Date(originalDate);
     nextYearDate.setFullYear(now.getFullYear());
     
-    // If still in the past, add one more year
     if (nextYearDate <= now) {
       nextYearDate.setFullYear(nextYearDate.getFullYear() + 1);
     }
@@ -904,7 +793,7 @@ export class PamPinBot {
       data: { 
         ...session.data, 
         temp_date: toISODateString(nextYearDate),
-        temp_repeat: true // Auto-enable yearly repeat
+        temp_repeat: true
       }
     });
 
@@ -919,9 +808,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Retry date input
-   */
   private async retryDate(userId: number, chatId: number): Promise<void> {
     const timezone = this.getUserTimezone(userId, chatId);
     const todayStr = getTodayFormatted(timezone);
@@ -936,9 +822,6 @@ export class PamPinBot {
     );
   }
 
-  /**
-   * Start edit reminder
-   */
   private async startEditReminder(userId: number, chatId: number, reminderId: string): Promise<void> {
     const reminder = getReminderById(reminderId);
     
@@ -947,7 +830,6 @@ export class PamPinBot {
       return;
     }
 
-    // For now, just show reminder details - full edit flow can be added later
     await this.api.sendMessageWithKeyboard(
       chatId,
       '⚠️ Редактирование пока не реализовано. Вы можете удалить напоминание и создать новое.',
