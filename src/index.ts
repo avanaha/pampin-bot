@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { initDatabase, closeDatabase } from './db/database';
-import { MaxApi, getMaxApi } from './bot/maxApi';
+import { MaxApi } from './bot/maxApi';
 import { PamPinBot } from './bot/handlers';
-import { ReminderScheduler, getScheduler } from './scheduler/reminderScheduler';
+import { ReminderScheduler } from './scheduler/reminderScheduler';
 import { Update } from './types/max-api';
 
 // Configuration
@@ -12,6 +12,15 @@ const DATABASE_PATH = process.env.DATABASE_PATH || './data/pampin.db';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const PORT = parseInt(process.env.PORT || '3000');
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+console.log('========================================');
+console.log('🤖 PamPin Bot Starting...');
+console.log('========================================');
+console.log('NODE_ENV:', NODE_ENV);
+console.log('GROUP_ID:', GROUP_ID);
+console.log('DATABASE_PATH:', DATABASE_PATH);
+console.log('BOT_TOKEN exists:', !!BOT_TOKEN);
+console.log('========================================');
 
 if (!BOT_TOKEN) {
   console.error('❌ MAX_BOT_TOKEN is required');
@@ -31,19 +40,19 @@ const scheduler = new ReminderScheduler();
  * Start bot in Long Polling mode
  */
 async function startLongPolling(): Promise<void> {
-  console.log('🔄 Starting in Long Polling mode...');
+  console.log('🔄 Starting Long Polling mode...');
   
   let marker: number | null = null;
   
   const poll = async () => {
     try {
-      // API returns { updates: Update[], marker: number }
+      // Get updates
       const response = await api.getUpdates(100, 30, marker);
       
       const updates = response.updates || [];
       
       if (updates.length > 0) {
-        console.log(`📥 Received ${updates.length} updates`);
+        console.log(`\n📥 Received ${updates.length} updates`);
         
         // Update marker from response
         if (response.marker) {
@@ -53,11 +62,15 @@ async function startLongPolling(): Promise<void> {
         // Process updates
         for (const update of updates) {
           try {
-            console.log(`[UPDATE] Type: ${Object.keys(update).find(k => update[k as keyof Update] !== undefined)}`);
             await bot.processUpdate(update);
           } catch (error) {
             console.error('Error processing update:', error);
           }
+        }
+      } else {
+        // Update marker even for empty responses
+        if (response.marker) {
+          marker = response.marker;
         }
       }
       
@@ -75,74 +88,17 @@ async function startLongPolling(): Promise<void> {
 }
 
 /**
- * Start bot in Webhook mode
- */
-async function startWebhook(): Promise<void> {
-  console.log('🔗 Starting in Webhook mode...');
-  
-  const http = await import('http');
-  
-  const server = http.createServer(async (req, res) => {
-    if (req.method === 'POST' && req.url === '/webhook') {
-      let body = '';
-      
-      req.on('data', chunk => {
-        body += chunk.toString();
-      });
-      
-      req.on('end', async () => {
-        try {
-          const update = JSON.parse(body);
-          await bot.processUpdate(update);
-          res.writeHead(200);
-          res.end('OK');
-        } catch (error) {
-          console.error('Webhook error:', error);
-          res.writeHead(500);
-          res.end('Error');
-        }
-      });
-    } else {
-      res.writeHead(404);
-      res.end('Not found');
-    }
-  });
-  
-  server.listen(PORT, () => {
-    console.log(`🌐 Webhook server listening on port ${PORT}`);
-  });
-  
-  // Subscribe to webhook
-  if (WEBHOOK_URL) {
-    try {
-      await api.subscribeWebhook(WEBHOOK_URL, [
-        'message_created',
-        'message_callback',
-        'bot_started'
-      ]);
-      console.log(`✅ Webhook registered: ${WEBHOOK_URL}`);
-    } catch (error) {
-      console.error('Failed to register webhook:', error);
-    }
-  }
-}
-
-/**
  * Main function
  */
 async function main(): Promise<void> {
-  console.log('🤖 PamPin Bot starting...');
-  console.log(`📍 Environment: ${NODE_ENV}`);
-  console.log(`📍 Group ID: ${GROUP_ID}`);
-  
-  // Initialize database
   console.log('📦 Initializing database...');
   initDatabase(DATABASE_PATH);
+  console.log('✅ Database initialized');
   
   // Get bot info
   try {
     const me = await api.getMe();
-    console.log(`✅ Connected as: ${me.name} (@${me.username})`);
+    console.log(`✅ Connected as: ${me.name} (user_id: ${me.user_id})`);
   } catch (error) {
     console.error('❌ Failed to get bot info:', error);
     process.exit(1);
@@ -153,11 +109,7 @@ async function main(): Promise<void> {
   scheduler.start();
   
   // Start bot
-  if (NODE_ENV === 'production' && WEBHOOK_URL) {
-    await startWebhook();
-  } else {
-    await startLongPolling();
-  }
+  await startLongPolling();
   
   console.log('✅ PamPin Bot is running!');
 }
