@@ -5,6 +5,7 @@ export interface User {
   user_id: number;
   name?: string;
   first_name?: string;
+  last_name?: string;
   username?: string;
   is_bot?: boolean;
   last_activity_time?: number;
@@ -88,35 +89,21 @@ export interface SendMessageRequest {
   body: NewMessageBody;
 }
 
-/**
- * Callback object structure from MAX API
- * When a user clicks a callback button, MAX sends this structure
- */
-export interface Callback {
-  /** Unique identifier for this callback */
-  id: string;
-  /** Payload from the button that was clicked */
-  payload: string;
-  /** User who clicked the button */
-  user?: User;
-  /** Chat ID where button was clicked */
-  chat_id?: number;
-  /** Message with the button */
+export interface MessageCallback {
+  callback_id: string;
+  user: User;
+  chat_id: number;
   message?: Message;
+  payload: string;
+  timestamp?: number;
 }
 
-export interface Update {
-  update_type: string;
-  update_id?: number;
-  timestamp?: number;
-  user_locale?: string;
+export interface Callback {
+  id: string;
+  payload: string;
+  user?: User;
+  chat_id?: number;
   message?: Message;
-  message_callback?: MessageCallback;
-  callback?: Callback;
-  sender?: User;
-  bot_started?: BotStarted;
-  user_added?: UserAdded;
-  chat_created?: ChatCreated;
 }
 
 export interface BotStarted {
@@ -136,13 +123,20 @@ export interface ChatCreated {
   user: User;
 }
 
-export interface MessageCallback {
-  callback_id: string;
-  user: User;
-  chat_id: number;
-  message?: Message;
-  payload: string;
+export interface Update {
+  update_type: string;
+  update_id?: number;
   timestamp?: number;
+  user_locale?: string;
+  message?: Message;
+  message_callback?: MessageCallback;
+  callback?: Callback;
+  sender?: User;
+  user?: User;
+  chat_id?: number;
+  bot_started?: BotStarted;
+  user_added?: UserAdded;
+  chat_created?: ChatCreated;
 }
 
 export interface Subscription {
