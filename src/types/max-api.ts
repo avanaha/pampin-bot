@@ -99,6 +99,10 @@ export interface Callback {
   payload: string;
   /** User who clicked the button */
   user?: User;
+  /** Chat ID where button was clicked */
+  chat_id?: number;
+  /** Message with the button */
+  message?: Message;
 }
 
 export interface Update {
