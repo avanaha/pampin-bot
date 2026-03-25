@@ -40,16 +40,18 @@ async function startLongPolling(): Promise<void> {
       // Get updates
       const response = await api.getUpdates(100, 30, marker);
       
+      // КРИТИЧЕСКИ ВАЖНО: обновляем marker ВСЕГДА, даже если updates пустой!
+      // MAX API возвращает новый marker при каждом запросе
+      if (response.marker) {
+        marker = response.marker;
+        console.log(`[POLL] Marker updated to: ${marker}`);
+      }
+      
       const updates = response.updates || [];
       
       if (updates.length > 0) {
         console.log(`\n${'='.repeat(60)}`);
         console.log(`📥 Received ${updates.length} updates`);
-        
-        // Update marker from response
-        if (response.marker) {
-          marker = response.marker;
-        }
         
         // Process updates
         for (const update of updates) {
