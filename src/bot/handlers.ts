@@ -253,7 +253,6 @@ export class PamPinBot {
       await this.api.sendText(chatId, 'Ошибка. Попробуйте ещё раз.');
     }
   }
-
   private async handleCallback(update: Update): Promise<void> {
     console.log('[CALLBACK] === START ===');
     console.log('[CALLBACK] FULL JSON:', JSON.stringify(update, null, 2));
@@ -478,7 +477,6 @@ export class PamPinBot {
         await this.showMainMenu(chatId);
     }
   }
-
   private async sendWelcome(chatId: number): Promise<void> {
     console.log('[WELCOME] chatId:', chatId);
     const text = `👋 *Добро пожаловать в PamPin!*
@@ -769,7 +767,6 @@ _Формат: ЧЧ-ММ (например: 14-30)_
 
     await this.showRepeatMenu(userId, chatId);
   }
-
   // ==================== REPEAT MENU ====================
 
   private async showRepeatMenu(userId: number, chatId: number): Promise<void> {
@@ -1122,7 +1119,6 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       'markdown'
     );
   }
-
   private async handleEditDescription(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     let description: string | undefined = text;
     if (text.toLowerCase() === 'нет' || text.toLowerCase() === 'без описания') {
@@ -1408,7 +1404,6 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       await this.api.sendText(chatId, '❌ Ошибка при удалении.');
     }
   }
-
   // ==================== EDIT EXISTING REMINDER ====================
 
   private async showEditExistingMenu(userId: number, chatId: number, id: string): Promise<void> {
@@ -1589,7 +1584,7 @@ PamPin — ваш календарь важных дат.
 
 📌 ${reminder.title}
 📅 ${this.formatDateForUser(d, tz)}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
-${reminder.description ? `\n📝 ${reminder.description}` : ''}
+ ${reminder.description ? `\n📝 ${reminder.description}` : ''}
 
 ⏰ Напоминаю ${label}`;
 
