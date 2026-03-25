@@ -253,6 +253,7 @@ export class PamPinBot {
       await this.api.sendText(chatId, 'Ошибка. Попробуйте ещё раз.');
     }
   }
+
   private async handleCallback(update: Update): Promise<void> {
     console.log('[CALLBACK] === START ===');
     console.log('[CALLBACK] FULL JSON:', JSON.stringify(update, null, 2));
@@ -477,6 +478,7 @@ export class PamPinBot {
         await this.showMainMenu(chatId);
     }
   }
+
   private async sendWelcome(chatId: number): Promise<void> {
     console.log('[WELCOME] chatId:', chatId);
     const text = `👋 *Добро пожаловать в PamPin!*
@@ -767,6 +769,7 @@ _Формат: ЧЧ-ММ (например: 14-30)_
 
     await this.showRepeatMenu(userId, chatId);
   }
+
   // ==================== REPEAT MENU ====================
 
   private async showRepeatMenu(userId: number, chatId: number): Promise<void> {
@@ -805,14 +808,12 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     const session = this.getSession(userId, chatId);
 
     if (repeatType === 'custom_days') {
-      // Показать меню выбора дней недели
       this.saveSession(userId, chatId, {
         state: 'waiting_for_repeat_days',
         data: { ...session.data, temp_repeat_type: repeatType, temp_repeat_days: [] }
       });
       await this.showRepeatDaysMenu(userId, chatId);
     } else if (repeatType === 'monthly_day') {
-      // Запросить число месяца
       this.saveSession(userId, chatId, {
         state: 'waiting_for_month_day',
         data: { ...session.data, temp_repeat_type: repeatType }
@@ -826,7 +827,6 @@ _Формат: ЧЧ-ММ (например: 14-30)_
         'markdown'
       );
     } else {
-      // Остальные варианты - сразу к preview
       this.saveSession(userId, chatId, {
         state: 'preview',
         data: { ...session.data, temp_repeat_type: repeatType }
@@ -1119,6 +1119,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       'markdown'
     );
   }
+
   private async handleEditDescription(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     let description: string | undefined = text;
     if (text.toLowerCase() === 'нет' || text.toLowerCase() === 'без описания') {
@@ -1132,28 +1133,6 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     
     await this.showPreview(userId, chatId, updatedSession.data);
   }
-
-      await this.showPreview(userId, chatId, updatedSession.data);
-  }
-
-  private async handleEditMonthDay(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    console.log('[EDIT_MONTH_DAY] userId:', userId, 'chatId:', chatId, 'text:', text);
-    
-    const day = parseInt(text.trim(), 10);
-    if (isNaN(day) || day < 1 || day > 28) {
-      await this.api.sendText(chatId, '❌ Введите число от 1 до 28:');
-      return;
-    }
-
-    const updatedSession = this.saveSession(userId, chatId, {
-      state: 'preview',
-      data: { ...session.data, temp_month_day: day }
-    });
-    
-    await this.showPreview(userId, chatId, updatedSession.data);
-  }
-
-  // ==================== SAVE REMINDER ====================
 
   // ==================== SAVE REMINDER ====================
 
@@ -1426,6 +1405,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       await this.api.sendText(chatId, '❌ Ошибка при удалении.');
     }
   }
+
   // ==================== EDIT EXISTING REMINDER ====================
 
   private async showEditExistingMenu(userId: number, chatId: number, id: string): Promise<void> {
@@ -1606,7 +1586,7 @@ PamPin — ваш календарь важных дат.
 
 📌 ${reminder.title}
 📅 ${this.formatDateForUser(d, tz)}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
- ${reminder.description ? `\n📝 ${reminder.description}` : ''}
+${reminder.description ? `\n📝 ${reminder.description}` : ''}
 
 ⏰ Напоминаю ${label}`;
 
@@ -1640,9 +1620,7 @@ PamPin — ваш календарь важных дат.
   }
 
   private parseISODate(isoString: string, timezone: string): Date {
-    // ISO формат: YYYY-MM-DD
     const [year, month, day] = isoString.split('-').map(Number);
-    // Создаём дату в timezone пользователя
     const offset = getTimezoneOffset(timezone);
     return new Date(Date.UTC(year, month - 1, day, offset, 0, 0));
   }
