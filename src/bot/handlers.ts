@@ -8,6 +8,7 @@ import {
   archiveReminder,
   restoreReminder,
   deleteReminderPermanently,
+  updateReminder,
   getUserSettings,
   upsertUserSettings,
   getUserSession,
@@ -16,6 +17,7 @@ import {
 } from '../db/database';
 import {
   parseDate,
+  parseDateWithFeedback,
   parseTime,
   formatDate,
   formatTime,
@@ -24,23 +26,13 @@ import {
   SUPPORTED_TIMEZONES,
   toISODateString,
   getCurrentDateTimeInTimezone,
-  getTimezoneOffset
+  getTimezoneOffset,
+  getDayOfWeek,
+  addDays,
+  addMonths,
+  addYears
 } from '../utils/dateUtils';
-import { Reminder, UserSession } from '../types';
-
-// Упрощённые периоды (без 1 год, 6 мес, 3 мес)
-const PREDEFINED_PERIODS = [
-  { value: 30 * 24 * 60 * 60 * 1000, label: 'за 1 месяц' },
-  { value: 14 * 24 * 60 * 60 * 1000, label: 'за 2 недели' },
-  { value: 7 * 24 * 60 * 60 * 1000, label: 'за 1 неделю' },
-  { value: 3 * 24 * 60 * 60 * 1000, label: 'за 3 дня' },
-  { value: 24 * 60 * 60 * 1000, label: 'за 1 день' },
-  { value: 12 * 60 * 60 * 1000, label: 'за 12 часов' },
-  { value: 6 * 60 * 60 * 1000, label: 'за 6 часов' },
-  { value: 3 * 60 * 60 * 1000, label: 'за 3 часа' },
-  { value: 1 * 60 * 60 * 1000, label: 'за 1 час' },
-  { value: 30 * 60 * 1000, label: 'за 30 минут' },
-];
+import { Reminder, UserSession, RepeatType, PREDEFINED_PERIODS, REPEAT_OPTIONS, WEEKDAYS } from '../types';
 
 export class PamPinBot {
   private api: MaxApi;
@@ -73,10 +65,11 @@ export class PamPinBot {
     const updated: UserSession = {
       ...current,
       ...session,
+      data: { ...current.data, ...session.data },
       last_activity: new Date()
     };
     this.sessions.set(key, updated);
-    updateUserSession(userId, chatId, session);
+    updateUserSession(userId, chatId, { state: updated.state, data: updated.data });
     console.log(`[SESSION] SAVED: ${key}, state=${updated.state}`);
     return updated;
   }
@@ -135,7 +128,7 @@ export class PamPinBot {
 *Что я умею:*
 • Добавлять напоминания
 • Напоминать за нужный период
-• Повторять ежегодно`;
+• Повторять по расписанию`;
 
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
@@ -211,6 +204,9 @@ export class PamPinBot {
       case 'waiting_for_description':
         await this.handleDescriptionInput(userId, chatId, text.trim(), session);
         break;
+      case 'waiting_for_month_day':
+        await this.handleMonthDayInput(userId, chatId, text.trim(), session);
+        break;
       case 'editing_title':
         await this.handleEditTitle(userId, chatId, text.trim(), session);
         break;
@@ -222,6 +218,9 @@ export class PamPinBot {
         break;
       case 'editing_description':
         await this.handleEditDescription(userId, chatId, text.trim(), session);
+        break;
+      case 'editing_month_day':
+        await this.handleEditMonthDay(userId, chatId, text.trim(), session);
         break;
       default:
         await this.showMainMenu(chatId);
@@ -387,6 +386,9 @@ export class PamPinBot {
       case 'confirm_delete':
         await this.doDelete(userId, chatId, params[0]);
         break;
+      case 'cancel_delete':
+        await this.showReminderDetails(userId, chatId, params[0]);
+        break;
       case 'settings':
         await this.showSettings(userId, chatId);
         break;
@@ -396,20 +398,32 @@ export class PamPinBot {
       case 'set_timezone':
         await this.doSetTimezone(userId, chatId, params[0]);
         break;
-      case 'select_periods':
-        await this.showPeriodsMenu(userId, chatId);
+      case 'select_period':
+        await this.showPeriodMenu(userId, chatId);
         break;
-      case 'toggle_period':
-        await this.togglePeriod(userId, chatId, parseInt(params[0]));
+      case 'set_period':
+        await this.setPeriod(userId, chatId, parseInt(params[0]));
         break;
-      case 'toggle_repeat':
-        await this.toggleRepeat(userId, chatId);
+      case 'select_repeat':
+        await this.showRepeatMenu(userId, chatId);
+        break;
+      case 'set_repeat':
+        await this.setRepeat(userId, chatId, params[0] as RepeatType);
+        break;
+      case 'toggle_repeat_day':
+        await this.toggleRepeatDay(userId, chatId, parseInt(params[0]));
+        break;
+      case 'confirm_repeat_days':
+        await this.confirmRepeatDays(userId, chatId);
         break;
       case 'confirm_reminder':
         await this.saveReminder(userId, chatId);
         break;
       case 'edit_reminder':
         await this.showEditMenu(userId, chatId);
+        break;
+      case 'edit_existing_reminder':
+        await this.showEditExistingMenu(userId, chatId, params[0]);
         break;
       case 'edit_title':
         await this.startEditTitle(userId, chatId);
@@ -423,8 +437,23 @@ export class PamPinBot {
       case 'edit_description':
         await this.startEditDescription(userId, chatId);
         break;
-      case 'edit_periods':
-        await this.showPeriodsMenu(userId, chatId);
+      case 'edit_period':
+        await this.showPeriodMenu(userId, chatId);
+        break;
+      case 'edit_repeat':
+        await this.showRepeatMenu(userId, chatId);
+        break;
+      case 'edit_existing_title':
+        await this.startEditExistingTitle(userId, chatId, params[0]);
+        break;
+      case 'edit_existing_date':
+        await this.startEditExistingDate(userId, chatId, params[0]);
+        break;
+      case 'edit_existing_time':
+        await this.startEditExistingTime(userId, chatId, params[0]);
+        break;
+      case 'edit_existing_description':
+        await this.startEditExistingDescription(userId, chatId, params[0]);
         break;
       case 'main_menu':
         await this.showMainMenu(chatId);
@@ -441,6 +470,9 @@ export class PamPinBot {
         break;
       case 'dismiss':
         break;
+      case 'force_date':
+        await this.forceDate(userId, chatId, params[0]);
+        break;
       default:
         console.log('[ACTION] Unknown:', action);
         await this.showMainMenu(chatId);
@@ -456,7 +488,7 @@ export class PamPinBot {
 *Что я умею:*
 • Добавлять напоминания
 • Напоминать за нужный период
-• Повторять ежегодно`;
+• Повторять по расписанию`;
 
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
@@ -486,13 +518,10 @@ export class PamPinBot {
     this.saveSession(userId, chatId, {
       state: 'waiting_for_title',
       data: {
-        temp_timezone: tz,
-        temp_periods: [86400000],
-        temp_repeat: false
+        temp_timezone: tz
       }
     });
 
-    const today = this.getTodayString(tz);
     await this.api.sendMessageWithKeyboard(
       chatId,
       `📝 *Создание напоминания*
@@ -535,25 +564,26 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
     console.log('[DATE] userId:', userId, 'chatId:', chatId, 'text:', text);
     
     const tz = session.data?.temp_timezone || 'Europe/Moscow';
-    const date = parseDate(text, tz);
+    const result = parseDateWithFeedback(text, tz);
 
-    if (!date) {
-      const today = this.getTodayString(tz);
-      await this.api.sendText(chatId, `❌ Не удалось распознать дату.
-
-📅 Используйте формат: ДД/ММ/ГГГГ
-_Например: ${today}_`);
+    if (!result.date) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        result.error || '❌ Не удалось распознать дату.',
+        [[callbackButton('❌ Отмена', 'cancel')]],
+        'markdown'
+      );
       return;
     }
 
-    if (isDateInPast(date, tz)) {
+    if (isDateInPast(result.date, tz)) {
       await this.api.sendMessageWithKeyboard(
         chatId,
-        `⚠️ Дата *${this.formatDateForUser(date, tz)}* уже прошла.
+        `⚠️ Дата *${this.formatDateForUser(result.date, tz)}* уже прошла.
 
 Всё равно создать напоминание?`,
         [
-          [callbackButton('✅ Да, создать', `force_date:${toISODateString(date)}`)],
+          [callbackButton('✅ Да, создать', `force_date:${toISODateString(result.date)}`)],
           [callbackButton('🔄 Ввести другую дату', 'add_reminder')],
           [callbackButton('❌ Отмена', 'cancel')]
         ],
@@ -564,12 +594,12 @@ _Например: ${today}_`);
 
     this.saveSession(userId, chatId, {
       state: 'waiting_for_time',
-      data: { ...session.data, temp_date: toISODateString(date) }
+      data: { ...session.data, temp_date: toISODateString(result.date) }
     });
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      `✅ Дата: *${this.formatDateForUser(date, tz)}*
+      `✅ Дата: *${this.formatDateForUser(result.date, tz)}*
 
 🕐 Введите время события:
 _Формат: ЧЧ-ММ (например: 14-30)_
@@ -587,10 +617,18 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     
     const time = parseTime(text);
     if (!time) {
-      await this.api.sendText(chatId, `❌ Не удалось распознать время.
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        `❌ Не удалось распознать время.
 
 🕐 Используйте формат: ЧЧ-ММ
-_Например: 14-30 или 09-00_`);
+_Например: 14-30 или 09-00_`,
+        [
+          [callbackButton('⏭ Пропустить время', 'skip_time')],
+          [callbackButton('❌ Отмена', 'cancel')]
+        ],
+        'markdown'
+      );
       return;
     }
 
@@ -617,19 +655,19 @@ _Например: Купить торт и подарки_
   private async handleDescriptionInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     console.log('[DESC] userId:', userId, 'chatId:', chatId, 'text:', text);
     
-    const updatedSession = this.saveSession(userId, chatId, {
-      state: 'preview',
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_period',
       data: { ...session.data, temp_description: text }
     });
 
-    await this.showPreview(userId, chatId, updatedSession.data);
+    await this.showPeriodMenu(userId, chatId);
   }
 
   private async skipTime(userId: number, chatId: number): Promise<void> {
     console.log('[SKIP_TIME] userId:', userId, 'chatId:', chatId);
     const session = this.getSession(userId, chatId);
     
-    const updatedSession = this.saveSession(userId, chatId, {
+    this.saveSession(userId, chatId, {
       state: 'waiting_for_description',
       data: { ...session.data, temp_time: undefined }
     });
@@ -651,13 +689,231 @@ _Например: Купить торт и подарки_
     console.log('[SKIP_DESC] userId:', userId, 'chatId:', chatId);
     const session = this.getSession(userId, chatId);
     
-    const updatedSession = this.saveSession(userId, chatId, {
-      state: 'preview',
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_period',
       data: { ...session.data, temp_description: undefined }
     });
 
-    await this.showPreview(userId, chatId, updatedSession.data);
+    await this.showPeriodMenu(userId, chatId);
   }
+
+  private async forceDate(userId: number, chatId: number, dateStr: string): Promise<void> {
+    console.log('[FORCE_DATE] userId:', userId, 'chatId:', chatId, 'date:', dateStr);
+    const session = this.getSession(userId, chatId);
+    
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_time',
+      data: { ...session.data, temp_date: dateStr }
+    });
+
+    const tz = session.data?.temp_timezone || 'Europe/Moscow';
+    const date = this.parseISODate(dateStr, tz);
+    
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `✅ Дата: *${this.formatDateForUser(date, tz)}* (прошедшая)
+
+🕐 Введите время события:
+_Формат: ЧЧ-ММ (например: 14-30)_
+Или пропустите, если время не важно:`,
+      [
+        [callbackButton('⏭ Пропустить время', 'skip_time')],
+        [callbackButton('❌ Отмена', 'cancel')]
+      ],
+      'markdown'
+    );
+  }
+
+  // ==================== PERIOD MENU ====================
+
+  private async showPeriodMenu(userId: number, chatId: number): Promise<void> {
+    console.log('[PERIOD_MENU] userId:', userId, 'chatId:', chatId);
+    const session = this.getSession(userId, chatId);
+    const data = session.data;
+
+    const title = data?.temp_title || 'Напоминание';
+    const tz = data?.temp_timezone || 'Europe/Moscow';
+    let dateStr = '';
+    if (data?.temp_date) {
+      const date = this.parseISODate(data.temp_date, tz);
+      dateStr = this.formatDateForUser(date, tz);
+      if (data.temp_time) {
+        dateStr += ` в ${data.temp_time}`;
+      }
+    }
+
+    const text = `🔔 *За сколько напомнить?*
+
+📌 ${title}
+📅 ${dateStr || 'дата не указана'}
+
+Выберите один вариант:`;
+
+    const buttons: InlineKeyboardButton[][] = PREDEFINED_PERIODS.map((p, i) => [
+      callbackButton(p.label, `set_period:${i}`)
+    ]);
+    buttons.push([callbackButton('❌ Отмена', 'cancel')]);
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  private async setPeriod(userId: number, chatId: number, idx: number): Promise<void> {
+    console.log('[SET_PERIOD] userId:', userId, 'chatId:', chatId, 'idx:', idx);
+    const session = this.getSession(userId, chatId);
+    const period = PREDEFINED_PERIODS[idx];
+
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_repeat',
+      data: { ...session.data, temp_period: period.value }
+    });
+
+    await this.showRepeatMenu(userId, chatId);
+  }
+
+  // ==================== REPEAT MENU ====================
+
+  private async showRepeatMenu(userId: number, chatId: number): Promise<void> {
+    console.log('[REPEAT_MENU] userId:', userId, 'chatId:', chatId);
+    const session = this.getSession(userId, chatId);
+    const data = session.data;
+
+    const title = data?.temp_title || 'Напоминание';
+    const tz = data?.temp_timezone || 'Europe/Moscow';
+    let dateStr = '';
+    if (data?.temp_date) {
+      const date = this.parseISODate(data.temp_date, tz);
+      dateStr = this.formatDateForUser(date, tz);
+      if (data.temp_time) {
+        dateStr += ` в ${data.temp_time}`;
+      }
+    }
+
+    const text = `🔄 *Нужно ли повторять это напоминание?*
+
+📌 ${title}
+📅 ${dateStr || 'дата не указана'}
+
+Выберите вариант повтора:`;
+
+    const buttons: InlineKeyboardButton[][] = REPEAT_OPTIONS.map((r) => [
+      callbackButton(r.label, `set_repeat:${r.value}`)
+    ]);
+    buttons.push([callbackButton('❌ Отмена', 'cancel')]);
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  private async setRepeat(userId: number, chatId: number, repeatType: RepeatType): Promise<void> {
+    console.log('[SET_REPEAT] userId:', userId, 'chatId:', chatId, 'repeatType:', repeatType);
+    const session = this.getSession(userId, chatId);
+
+    if (repeatType === 'custom_days') {
+      // Показать меню выбора дней недели
+      this.saveSession(userId, chatId, {
+        state: 'waiting_for_repeat_days',
+        data: { ...session.data, temp_repeat_type: repeatType, temp_repeat_days: [] }
+      });
+      await this.showRepeatDaysMenu(userId, chatId);
+    } else if (repeatType === 'monthly_day') {
+      // Запросить число месяца
+      this.saveSession(userId, chatId, {
+        state: 'waiting_for_month_day',
+        data: { ...session.data, temp_repeat_type: repeatType }
+      });
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        `📅 Введите число месяца (от 1 до 28):
+
+Например: 18 — значит каждого 18-го числа`,
+        [[callbackButton('◀️ Назад', 'select_repeat')]],
+        'markdown'
+      );
+    } else {
+      // Остальные варианты - сразу к preview
+      this.saveSession(userId, chatId, {
+        state: 'preview',
+        data: { ...session.data, temp_repeat_type: repeatType }
+      });
+      await this.showPreview(userId, chatId, session.data);
+    }
+  }
+
+  private async showRepeatDaysMenu(userId: number, chatId: number): Promise<void> {
+    console.log('[REPEAT_DAYS_MENU] userId:', userId, 'chatId:', chatId);
+    const session = this.getSession(userId, chatId);
+    const selected = session.data?.temp_repeat_days || [];
+
+    const text = `📆 *Выберите дни недели:*
+
+(можно выбрать несколько)`;
+
+    const buttons: InlineKeyboardButton[][] = WEEKDAYS.map((day) => {
+      const isSelected = selected.includes(day.value);
+      const prefix = isSelected ? '✅ ' : '⬜ ';
+      return [callbackButton(`${prefix}${day.label}`, `toggle_repeat_day:${day.value}`)];
+    });
+    buttons.push([callbackButton('✅ Готово', 'confirm_repeat_days')]);
+    buttons.push([callbackButton('◀️ Назад', 'select_repeat')]);
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  private async toggleRepeatDay(userId: number, chatId: number, dayValue: number): Promise<void> {
+    console.log('[TOGGLE_REPEAT_DAY] userId:', userId, 'chatId:', chatId, 'day:', dayValue);
+    const session = this.getSession(userId, chatId);
+    const days = [...(session.data?.temp_repeat_days || [])];
+
+    const idx = days.indexOf(dayValue);
+    if (idx >= 0) {
+      days.splice(idx, 1);
+    } else {
+      days.push(dayValue);
+      days.sort((a, b) => a - b);
+    }
+
+    this.saveSession(userId, chatId, {
+      data: { ...session.data, temp_repeat_days: days }
+    });
+
+    await this.showRepeatDaysMenu(userId, chatId);
+  }
+
+  private async confirmRepeatDays(userId: number, chatId: number): Promise<void> {
+    console.log('[CONFIRM_REPEAT_DAYS] userId:', userId, 'chatId:', chatId);
+    const session = this.getSession(userId, chatId);
+    const days = session.data?.temp_repeat_days || [];
+
+    if (days.length === 0) {
+      await this.api.sendText(chatId, '❌ Выберите хотя бы один день недели.');
+      return;
+    }
+
+    this.saveSession(userId, chatId, {
+      state: 'preview',
+      data: { ...session.data }
+    });
+
+    await this.showPreview(userId, chatId, session.data);
+  }
+
+  private async handleMonthDayInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    console.log('[MONTH_DAY] userId:', userId, 'chatId:', chatId, 'text:', text);
+    
+    const day = parseInt(text.trim(), 10);
+    if (isNaN(day) || day < 1 || day > 28) {
+      await this.api.sendText(chatId, '❌ Введите число от 1 до 28:');
+      return;
+    }
+
+    this.saveSession(userId, chatId, {
+      state: 'preview',
+      data: { ...session.data, temp_month_day: day }
+    });
+
+    await this.showPreview(userId, chatId, session.data);
+  }
+
+  // ==================== PREVIEW ====================
 
   private async showPreview(userId: number, chatId: number, data: UserSession['data']): Promise<void> {
     console.log('[PREVIEW] chatId:', chatId, 'data:', JSON.stringify(data));
@@ -670,16 +926,17 @@ _Например: Купить торт и подарки_
     
     const tz = data.temp_timezone || 'Europe/Moscow';
     const date = data.temp_date ? this.parseISODate(data.temp_date, tz) : new Date();
-    const periods = data.temp_periods || [86400000];
-    const periodLabels = periods.map(p => formatPeriod(p)).join(', ');
+    const period = data.temp_period || 86400000;
+    const periodLabel = formatPeriod(period);
+    const repeatLabel = this.getRepeatLabel(data.temp_repeat_type || 'none', data.temp_repeat_days, data.temp_month_day);
 
     const text = `📋 *Проверка напоминания*
 
 📌 *Название:* ${data.temp_title}
 📅 *Дата:* ${this.formatDateForUser(date, tz)}${data.temp_time ? ` в ${data.temp_time}` : ' (без времени)'}
 📝 *Описание:* ${data.temp_description || 'нет'}
-🔔 *Напомнить:* ${periodLabels}
-🔄 *Повторять ежегодно:* ${data.temp_repeat ? 'да' : 'нет'}
+🔔 *Напомнить:* ${periodLabel}
+🔄 *Повтор:* ${repeatLabel}
 
 Всё верно?`;
 
@@ -691,6 +948,29 @@ _Например: Купить торт и подарки_
 
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
+
+  private getRepeatLabel(repeatType: RepeatType, days?: number[], monthDay?: number): string {
+    switch (repeatType) {
+      case 'none': return 'не повторять';
+      case 'daily': return 'ежедневно';
+      case 'weekdays': return 'по будням (пн-пт)';
+      case 'weekends': return 'по выходным (сб-вс)';
+      case 'weekly': return 'еженедельно';
+      case 'monthly': return 'ежемесячно';
+      case 'yearly': return 'ежегодно';
+      case 'custom_days':
+        if (days && days.length > 0) {
+          const dayNames = days.map(d => WEEKDAYS.find(w => w.value === d)?.short || '').join(', ');
+          return `по ${dayNames}`;
+        }
+        return 'выбранные дни';
+      case 'monthly_day':
+        return monthDay ? `каждого ${monthDay}-го числа` : 'каждого N-го числа';
+      default: return 'не повторять';
+    }
+  }
+
+  // ==================== EDIT MENU (при создании) ====================
 
   private async showEditMenu(userId: number, chatId: number): Promise<void> {
     console.log('[EDIT_MENU] userId:', userId, 'chatId:', chatId);
@@ -711,10 +991,8 @@ _Например: Купить торт и подарки_
       [callbackButton('📅 Дату', 'edit_date')],
       [callbackButton('🕐 Время', 'edit_time')],
       [callbackButton('📝 Описание', 'edit_description')],
-      [callbackButton('🔔 Периоды', 'edit_periods')],
-      [
-        callbackButton('🔄 Повтор: ' + (data.temp_repeat ? 'да' : 'нет'), 'toggle_repeat'),
-      ],
+      [callbackButton('🔔 Период', 'edit_period')],
+      [callbackButton('🔄 Повтор', 'edit_repeat')],
       [callbackButton('✅ Готово', 'confirm_reminder')],
       [callbackButton('❌ Отмена', 'cancel')]
     ];
@@ -770,17 +1048,21 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
 
   private async handleEditDate(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     const tz = session.data?.temp_timezone || 'Europe/Moscow';
-    const date = parseDate(text, tz);
+    const result = parseDateWithFeedback(text, tz);
     
-    if (!date) {
-      const today = this.getTodayString(tz);
-      await this.api.sendText(chatId, `❌ Не удалось распознать дату. Формат: ДД/ММ/ГГГГ (например: ${today})`);
+    if (!result.date) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        result.error || '❌ Не удалось распознать дату.',
+        [[callbackButton('◀️ Назад', 'edit_reminder')]],
+        'markdown'
+      );
       return;
     }
     
     const updatedSession = this.saveSession(userId, chatId, {
       state: 'preview',
-      data: { ...session.data, temp_date: toISODateString(date) }
+      data: { ...session.data, temp_date: toISODateString(result.date) }
     });
     
     await this.showPreview(userId, chatId, updatedSession.data);
@@ -788,7 +1070,6 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
 
   private async startEditTime(userId: number, chatId: number): Promise<void> {
     console.log('[EDIT_TIME] userId:', userId, 'chatId:', chatId);
-    const session = this.getSession(userId, chatId);
     
     this.saveSession(userId, chatId, { state: 'editing_time' });
     
@@ -856,74 +1137,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     await this.showPreview(userId, chatId, updatedSession.data);
   }
 
-  private async showPeriodsMenu(userId: number, chatId: number): Promise<void> {
-    console.log('[PERIODS] userId:', userId, 'chatId:', chatId);
-    const session = this.getSession(userId, chatId);
-    const selected = session.data?.temp_periods || [];
-
-    let text = '🔔 *За сколько напомнить?*\n';
-    text += '_Можно выбрать несколько вариантов:_\n\n';
-
-    const buttons: InlineKeyboardButton[][] = PREDEFINED_PERIODS.map((p, i) => {
-      const isSelected = selected.includes(p.value);
-      const prefix = isSelected ? '✅ ' : '⬜ ';
-      return [callbackButton(`${prefix}${p.label}`, `toggle_period:${i}`)];
-    });
-    
-    // Добавляем кнопку "Готово" только после выбора хотя бы одного периода
-    if (selected.length > 0) {
-      buttons.push([callbackButton('✅ Готово', 'confirm_periods')]);
-    }
-    buttons.push([callbackButton('◀️ Назад', 'edit_reminder')]);
-
-    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
-  }
-
-  private async togglePeriod(userId: number, chatId: number, idx: number): Promise<void> {
-    console.log('[TOGGLE_PERIOD] userId:', userId, 'chatId:', chatId, 'idx:', idx);
-    const session = this.getSession(userId, chatId);
-    const periods = [...(session.data?.temp_periods || [])];
-    const val = PREDEFINED_PERIODS[idx].value;
-
-    const i = periods.indexOf(val);
-    if (i >= 0) {
-      periods.splice(i, 1);
-    } else {
-      periods.push(val);
-      periods.sort((a, b) => b - a);
-    }
-
-    // Если выбрали период - сохраняем и показываем превью
-    if (periods.length > 0) {
-      const updatedSession = this.saveSession(userId, chatId, { 
-        state: 'preview',
-        data: { ...session.data, temp_periods: periods } 
-      });
-      await this.showPreview(userId, chatId, updatedSession.data);
-    } else {
-      // Если сняли все периоды - остаёмся в меню
-      this.saveSession(userId, chatId, { data: { ...session.data, temp_periods: periods } });
-      await this.showPeriodsMenu(userId, chatId);
-    }
-  }
-
-  private async confirmPeriods(userId: number, chatId: number): Promise<void> {
-    const session = this.getSession(userId, chatId);
-    await this.showPreview(userId, chatId, session.data);
-  }
-
-  private async toggleRepeat(userId: number, chatId: number): Promise<void> {
-    console.log('[TOGGLE_REPEAT] userId:', userId, 'chatId:', chatId);
-    const session = this.getSession(userId, chatId);
-    const newRepeat = !session.data?.temp_repeat;
-    
-    const updatedSession = this.saveSession(userId, chatId, { 
-      state: 'preview',
-      data: { ...session.data, temp_repeat: newRepeat } 
-    });
-    
-    await this.showPreview(userId, chatId, updatedSession.data);
-  }
+  // ==================== SAVE REMINDER ====================
 
   private async saveReminder(userId: number, chatId: number): Promise<void> {
     console.log('[SAVE] userId:', userId, 'chatId:', chatId);
@@ -947,8 +1161,10 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
         event_date: data.temp_date,
         event_time: data.temp_time,
         timezone: data.temp_timezone || 'Europe/Moscow',
-        reminder_periods: data.temp_periods || [86400000],
-        repeat_yearly: data.temp_repeat || false,
+        reminder_periods: [data.temp_period || 86400000],
+        repeat_type: data.temp_repeat_type || 'none',
+        repeat_days: data.temp_repeat_days,
+        repeat_month_day: data.temp_month_day,
         is_active: true
       });
 
@@ -958,15 +1174,16 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 
       const tz = data.temp_timezone || 'Europe/Moscow';
       const eventDate = this.parseISODate(reminder.event_date, tz);
-      const periods = reminder.reminder_periods.map(p => formatPeriod(p)).join(', ');
+      const periodLabel = formatPeriod(reminder.reminder_periods[0]);
+      const repeatLabel = this.getRepeatLabel(reminder.repeat_type, reminder.repeat_days, reminder.repeat_month_day);
 
       const text = `✅ *Напоминание создано!*
 
 📌 *${reminder.title}*
 📅 Дата: ${this.formatDateForUser(eventDate, tz)}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
 📝 Описание: ${reminder.description || 'нет'}
-🔔 Напомнить: ${periods}
-🔄 Повторять ежегодно: ${reminder.repeat_yearly ? 'да' : 'нет'}`;
+🔔 Напомнить: ${periodLabel}
+🔄 Повтор: ${repeatLabel}`;
 
       await this.api.sendMessageWithKeyboard(
         chatId,
@@ -982,6 +1199,8 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       await this.api.sendText(chatId, '❌ Ошибка при сохранении.');
     }
   }
+
+  // ==================== LIST REMINDERS ====================
 
   private async showRemindersList(userId: number, chatId: number): Promise<void> {
     console.log('[LIST] userId:', userId, 'chatId:', chatId);
@@ -1022,7 +1241,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
   }
 
   private async showArchivedList(userId: number, chatId: number): Promise<void> {
-    console.log('[ARCHIVE] userId:', userId, 'chatId:', chatId);
+    console.log('[ARCHIVE_LIST] userId:', userId, 'chatId:', chatId);
     const reminders = getArchivedRemindersByUser(userId, chatId);
 
     if (reminders.length === 0) {
@@ -1050,6 +1269,8 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
+  // ==================== REMINDER DETAILS ====================
+
   private async showReminderDetails(userId: number, chatId: number, id: string): Promise<void> {
     console.log('[DETAILS] id:', id);
     const r = getReminderById(id);
@@ -1061,16 +1282,18 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     const settings = getUserSettings(userId, chatId);
     const tz = settings?.timezone || 'Europe/Moscow';
     const d = this.parseISODate(r.event_date, tz);
-    const periods = r.reminder_periods.map(p => formatPeriod(p)).join(', ');
+    const periodLabel = r.reminder_periods.map(p => formatPeriod(p)).join(', ');
+    const repeatLabel = this.getRepeatLabel(r.repeat_type, r.repeat_days, r.repeat_month_day);
 
     const text = `📌 *${r.title}*
 
 📅 *Дата:* ${this.formatDateForUser(d, tz)}${r.event_time ? ` в ${r.event_time}` : ''}
 📝 *Описание:* ${r.description || 'нет'}
-🔔 *Напомнить:* ${periods}
-🔄 *Повторять ежегодно:* ${r.repeat_yearly ? 'да' : 'нет'}`;
+🔔 *Напомнить:* ${periodLabel}
+🔄 *Повтор:* ${repeatLabel}`;
 
     const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('✏️ Редактировать', `edit_existing_reminder:${id}`)],
       [
         r.is_active
           ? callbackButton('📦 В архив', `archive_reminder:${id}`)
@@ -1083,7 +1306,10 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
+  // ==================== ARCHIVE / RESTORE / DELETE ====================
+
   private async confirmArchive(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[CONFIRM_ARCHIVE] id:', id);
     const r = getReminderById(id);
     if (!r) return;
 
@@ -1099,19 +1325,24 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
   }
 
   private async doArchive(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[DO_ARCHIVE] id:', id);
     if (archiveReminder(id)) {
       await this.api.sendMessageWithKeyboard(
         chatId,
-        '📦 Напоминание перемещено в архив.',
+        '✅ *Напоминание перемещено в архив.*',
         [
           [callbackButton('📋 Активные', 'list_reminders')],
           [callbackButton('📦 Архив', 'archived_reminders')]
-        ]
+        ],
+        'markdown'
       );
+    } else {
+      await this.api.sendText(chatId, '❌ Ошибка при архивации.');
     }
   }
 
   private async confirmRestore(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[CONFIRM_RESTORE] id:', id);
     const r = getReminderById(id);
     if (!r) return;
 
@@ -1127,13 +1358,24 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
   }
 
   private async doRestore(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[DO_RESTORE] id:', id);
     if (restoreReminder(id)) {
-      await this.api.sendText(chatId, '✅ Напоминание восстановлено из архива.');
-      await this.showRemindersList(userId, chatId);
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '✅ *Напоминание восстановлено из архива.*',
+        [
+          [callbackButton('📋 Активные', 'list_reminders')],
+          [callbackButton('📦 Архив', 'archived_reminders')]
+        ],
+        'markdown'
+      );
+    } else {
+      await this.api.sendText(chatId, '❌ Ошибка при восстановлении.');
     }
   }
 
   private async confirmDelete(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[CONFIRM_DELETE] id:', id);
     const r = getReminderById(id);
     if (!r) return;
 
@@ -1144,18 +1386,134 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 ❌ Это действие нельзя отменить!`,
       [
         [callbackButton('🗑 Да, удалить', `confirm_delete:${id}`)],
-        [callbackButton('❌ Нет', `view_reminder:${id}`)]
+        [callbackButton('❌ Нет', `cancel_delete:${id}`)]
       ],
       'markdown'
     );
   }
 
   private async doDelete(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[DO_DELETE] id:', id);
     if (deleteReminderPermanently(id)) {
-      await this.api.sendText(chatId, '🗑 Напоминание удалено навсегда.');
-      await this.showRemindersList(userId, chatId);
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        '🗑 *Напоминание удалено навсегда.*',
+        [
+          [callbackButton('📋 Мои напоминания', 'list_reminders')],
+          [callbackButton('🏠 Меню', 'main_menu')]
+        ],
+        'markdown'
+      );
+    } else {
+      await this.api.sendText(chatId, '❌ Ошибка при удалении.');
     }
   }
+
+  // ==================== EDIT EXISTING REMINDER ====================
+
+  private async showEditExistingMenu(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_MENU] id:', id);
+    const r = getReminderById(id);
+    if (!r) {
+      await this.api.sendText(chatId, '❌ Напоминание не найдено.');
+      return;
+    }
+
+    const text = `✏️ *Что хотите изменить?*
+
+📌 *${r.title}*`;
+
+    const buttons: InlineKeyboardButton[][] = [
+      [callbackButton('📝 Название', `edit_existing_title:${id}`)],
+      [callbackButton('📅 Дату', `edit_existing_date:${id}`)],
+      [callbackButton('🕐 Время', `edit_existing_time:${id}`)],
+      [callbackButton('📝 Описание', `edit_existing_description:${id}`)],
+      [callbackButton('◀️ Назад', `view_reminder:${id}`)]
+    ];
+
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
+  }
+
+  private async startEditExistingTitle(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_TITLE] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'editing_title',
+      data: { editing_reminder_id: id }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `📝 Введите новое название:
+_Текущее: ${r.title}_`,
+      [[callbackButton('◀️ Назад', `edit_existing_reminder:${id}`)]],
+      'markdown'
+    );
+  }
+
+  private async startEditExistingDate(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_DATE] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'editing_date',
+      data: { editing_reminder_id: id }
+    });
+
+    const today = this.getTodayString(r.timezone);
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `📅 Введите новую дату:
+_Формат: ДД/ММ/ГГГГ (например: ${today})_`,
+      [[callbackButton('◀️ Назад', `edit_existing_reminder:${id}`)]],
+      'markdown'
+    );
+  }
+
+  private async startEditExistingTime(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_TIME] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'editing_time',
+      data: { editing_reminder_id: id }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `🕐 Введите новое время:
+_Формат: ЧЧ-ММ (например: 14-30)_
+Или "нет" чтобы убрать время:`,
+      [[callbackButton('◀️ Назад', `edit_existing_reminder:${id}`)]],
+      'markdown'
+    );
+  }
+
+  private async startEditExistingDescription(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_DESC] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'editing_description',
+      data: { editing_reminder_id: id }
+    });
+
+    await this.api.sendMessageWithKeyboard(
+      chatId,
+      `📝 Введите новое описание:
+_Текущее: ${r.description || 'нет'}_
+Или "нет" чтобы убрать описание:`,
+      [[callbackButton('◀️ Назад', `edit_existing_reminder:${id}`)]],
+      'markdown'
+    );
+  }
+
+  // ==================== SETTINGS ====================
 
   private async showSettings(userId: number, chatId: number): Promise<void> {
     console.log('[SETTINGS] userId:', userId, 'chatId:', chatId);
@@ -1193,6 +1551,8 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     await this.showSettings(userId, chatId);
   }
 
+  // ==================== HELP ====================
+
   private async showHelp(chatId: number): Promise<void> {
     const text = `📚 *Справка*
 
@@ -1217,6 +1577,8 @@ PamPin — ваш календарь важных дат.
     );
   }
 
+  // ==================== NOTIFICATIONS ====================
+
   async sendReminderNotification(reminder: Reminder, periodMs: number): Promise<void> {
     const settings = getUserSettings(reminder.user_id, reminder.chat_id);
     const tz = settings?.timezone || 'Europe/Moscow';
@@ -1239,7 +1601,7 @@ ${reminder.description ? `\n📝 ${reminder.description}` : ''}
     );
   }
 
-  // Вспомогательные методы для работы с датами в timezone пользователя
+  // ==================== HELPER METHODS ====================
 
   private getTodayString(timezone: string): string {
     const now = getCurrentDateTimeInTimezone(timezone);
