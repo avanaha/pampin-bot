@@ -1133,6 +1133,28 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     await this.showPreview(userId, chatId, updatedSession.data);
   }
 
+      await this.showPreview(userId, chatId, updatedSession.data);
+  }
+
+  private async handleEditMonthDay(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
+    console.log('[EDIT_MONTH_DAY] userId:', userId, 'chatId:', chatId, 'text:', text);
+    
+    const day = parseInt(text.trim(), 10);
+    if (isNaN(day) || day < 1 || day > 28) {
+      await this.api.sendText(chatId, '❌ Введите число от 1 до 28:');
+      return;
+    }
+
+    const updatedSession = this.saveSession(userId, chatId, {
+      state: 'preview',
+      data: { ...session.data, temp_month_day: day }
+    });
+    
+    await this.showPreview(userId, chatId, updatedSession.data);
+  }
+
+  // ==================== SAVE REMINDER ====================
+
   // ==================== SAVE REMINDER ====================
 
   private async saveReminder(userId: number, chatId: number): Promise<void> {
