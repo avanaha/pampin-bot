@@ -97,6 +97,8 @@ export interface Callback {
   id: string;
   /** Payload from the button that was clicked */
   payload: string;
+  /** User who clicked the button */
+  user?: User;
 }
 
 export interface Update {
