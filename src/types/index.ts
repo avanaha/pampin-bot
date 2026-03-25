@@ -1,5 +1,17 @@
 // PamPin Application Types
 
+// Типы повторения напоминания
+export type RepeatType = 
+  | 'none'           // Не повторять
+  | 'daily'          // Ежедневно
+  | 'weekdays'       // По будням (пн-пт)
+  | 'weekends'       // По выходным (сб-вс)
+  | 'weekly'         // Еженедельно (в тот же день недели)
+  | 'monthly'        // Ежемесячно (в то же число)
+  | 'yearly'         // Ежегодно
+  | 'custom_days'    // Выбранные дни недели
+  | 'monthly_day';   // Каждого N-го числа месяца
+
 export interface Reminder {
   id: string;
   user_id: number;
@@ -10,7 +22,9 @@ export interface Reminder {
   event_time?: string; // HH:mm
   timezone: string;
   reminder_periods: number[]; // periods in milliseconds before event
-  repeat_yearly: boolean;
+  repeat_type: RepeatType; // Тип повторения
+  repeat_days?: number[]; // Дни недели для custom_days (0=Вс, 1=Пн, ..., 6=Сб)
+  repeat_month_day?: number; // Число месяца для monthly_day (1-28)
   created_at: Date;
   updated_at: Date;
   is_active: boolean;
@@ -46,11 +60,8 @@ export interface Notification {
   error_message?: string;
 }
 
-// Predefined reminder periods
+// Predefined reminder periods (сколько времени ДО события)
 export const PREDEFINED_PERIODS: { value: number; label: string }[] = [
-  { value: 365 * 24 * 60 * 60 * 1000, label: 'за 1 год' },
-  { value: 6 * 30 * 24 * 60 * 60 * 1000, label: 'за 6 месяцев' },
-  { value: 3 * 30 * 24 * 60 * 60 * 1000, label: 'за 3 месяца' },
   { value: 30 * 24 * 60 * 60 * 1000, label: 'за 1 месяц' },
   { value: 14 * 24 * 60 * 60 * 1000, label: 'за 2 недели' },
   { value: 7 * 24 * 60 * 60 * 1000, label: 'за 1 неделю' },
@@ -63,6 +74,30 @@ export const PREDEFINED_PERIODS: { value: number; label: string }[] = [
   { value: 30 * 60 * 1000, label: 'за 30 минут' },
 ];
 
+// Варианты повторения
+export const REPEAT_OPTIONS: { value: RepeatType; label: string }[] = [
+  { value: 'none', label: 'Не повторять' },
+  { value: 'daily', label: 'Ежедневно' },
+  { value: 'weekdays', label: 'По будням (пн-пт)' },
+  { value: 'weekends', label: 'По выходным (сб-вс)' },
+  { value: 'weekly', label: 'Еженедельно' },
+  { value: 'monthly', label: 'Ежемесячно' },
+  { value: 'yearly', label: 'Ежегодно' },
+  { value: 'custom_days', label: 'Выбрать дни недели' },
+  { value: 'monthly_day', label: 'Каждого N-го числа' },
+];
+
+// Дни недели
+export const WEEKDAYS = [
+  { value: 1, label: 'Понедельник', short: 'Пн' },
+  { value: 2, label: 'Вторник', short: 'Вт' },
+  { value: 3, label: 'Среда', short: 'Ср' },
+  { value: 4, label: 'Четверг', short: 'Чт' },
+  { value: 5, label: 'Пятница', short: 'Пт' },
+  { value: 6, label: 'Суббота', short: 'Сб' },
+  { value: 0, label: 'Воскресенье', short: 'Вс' },
+];
+
 // Bot states for conversation flow
 export type BotState = 
   | 'idle'
@@ -70,16 +105,21 @@ export type BotState =
   | 'waiting_for_date'
   | 'waiting_for_time'
   | 'waiting_for_description'
+  | 'waiting_for_period'
+  | 'waiting_for_repeat'
+  | 'waiting_for_repeat_days'
+  | 'waiting_for_month_day'
   | 'waiting_for_periods'
   | 'waiting_for_timezone'
-  | 'waiting_for_repeat'
   | 'editing_reminder'
   | 'selecting_reminder'
   | 'preview'
   | 'editing_title'
   | 'editing_date'
   | 'editing_time'
-  | 'editing_description';
+  | 'editing_description'
+  | 'editing_period'
+  | 'editing_repeat';
 
 export interface UserSession {
   user_id: number;
@@ -91,9 +131,11 @@ export interface UserSession {
     temp_date?: string;
     temp_time?: string;
     temp_description?: string;
-    temp_periods?: number[];
+    temp_period?: number;
+    temp_repeat_type?: RepeatType;
+    temp_repeat_days?: number[];
+    temp_month_day?: number;
     temp_timezone?: string;
-    temp_repeat?: boolean;
   };
   last_activity: Date;
 }
