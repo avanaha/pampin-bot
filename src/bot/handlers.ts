@@ -167,16 +167,21 @@ export class PamPinBot {
 
   private async handleMessage(update: Update): Promise<void> {
     console.log('[MESSAGE] === START ===');
-    
+    console.log('[MESSAGE] FULL JSON:', JSON.stringify(update, null, 2));
+
     const anyUpdate = update as any;
     const message = update.message;
-    
+
     if (!message) {
       console.log('[MESSAGE] No message!');
       return;
     }
 
-    // Извлекаем userId - пробуем все варианты
+    // ВАЖНО: При message_created в MAX API:
+    // - message.sender - это отправитель сообщения (пользователь)
+    // - message.recipient - это получатель (бот)
+
+    // Извлекаем userId из sender (отправитель = пользователь)
     let userId = 0;
     if (message.sender?.user_id) {
       userId = message.sender.user_id;
@@ -184,16 +189,10 @@ export class PamPinBot {
     } else if (update.sender?.user_id) {
       userId = update.sender.user_id;
       console.log('[MESSAGE] userId from update.sender.user_id:', userId);
-    } else if (anyUpdate.sender?.user_id) {
-      userId = anyUpdate.sender.user_id;
-      console.log('[MESSAGE] userId from anyUpdate.sender.user_id:', userId);
-    } else if (anyUpdate.user_id) {
-      userId = anyUpdate.user_id;
-      console.log('[MESSAGE] userId from anyUpdate.user_id:', userId);
     }
     console.log('[MESSAGE] FINAL userId:', userId);
 
-    // Извлекаем chatId - пробуем все варианты
+    // Извлекаем chatId из recipient
     let chatId = 0;
     if (message.recipient?.chat_id) {
       chatId = message.recipient.chat_id;
@@ -201,9 +200,6 @@ export class PamPinBot {
     } else if (message.chat_id) {
       chatId = message.chat_id;
       console.log('[MESSAGE] chatId from message.chat_id:', chatId);
-    } else if (anyUpdate.chat_id) {
-      chatId = anyUpdate.chat_id;
-      console.log('[MESSAGE] chatId from anyUpdate.chat_id:', chatId);
     }
     console.log('[MESSAGE] FINAL chatId:', chatId);
 
@@ -285,69 +281,75 @@ export class PamPinBot {
 
   private async handleCallback(update: Update): Promise<void> {
     console.log('[CALLBACK] === START ===');
-    
+    console.log('[CALLBACK] FULL JSON:', JSON.stringify(update, null, 2));
+
     const anyUpdate = update as any;
-    
-    // Извлекаем userId - пробуем все варианты
+
+    // ВАЖНО: При message_callback в MAX API:
+    // - update.message_callback.user - это пользователь, нажавший кнопку
+    // - update.sender - это БОТ (отправитель сообщения с кнопками)
+    // Поэтому нужно брать userId из message_callback.user!
+
+    // Извлекаем userId - ПРИОРИТЕТ: message_callback.user
     let userId = 0;
-    if (update.sender?.user_id) {
-      userId = update.sender.user_id;
-      console.log('[CALLBACK] userId from update.sender.user_id:', userId);
-    } else if (anyUpdate.sender?.user_id) {
-      userId = anyUpdate.sender.user_id;
-      console.log('[CALLBACK] userId from anyUpdate.sender.user_id:', userId);
+    if (update.message_callback?.user?.user_id) {
+      userId = update.message_callback.user.user_id;
+      console.log('[CALLBACK] userId from message_callback.user.user_id:', userId);
+    } else if (anyUpdate.message_callback?.user?.user_id) {
+      userId = anyUpdate.message_callback.user.user_id;
+      console.log('[CALLBACK] userId from anyUpdate.message_callback.user.user_id:', userId);
+    } else if (update.callback?.user?.user_id) {
+      userId = update.callback.user.user_id;
+      console.log('[CALLBACK] userId from callback.user.user_id:', userId);
     } else if (anyUpdate.user?.user_id) {
       userId = anyUpdate.user.user_id;
       console.log('[CALLBACK] userId from anyUpdate.user.user_id:', userId);
-    } else if (anyUpdate.message_callback?.user?.user_id) {
-      userId = anyUpdate.message_callback.user.user_id;
-      console.log('[CALLBACK] userId from message_callback.user.user_id:', userId);
-    } else if (anyUpdate.message?.sender?.user_id) {
-      userId = anyUpdate.message.sender.user_id;
-      console.log('[CALLBACK] userId from message.sender.user_id:', userId);
     }
     console.log('[CALLBACK] FINAL userId:', userId);
 
-    // Извлекаем chatId - пробуем все варианты
+    // Извлекаем chatId - ПРИОРИТЕТ: message_callback.chat_id
     let chatId = 0;
-    if (anyUpdate.chat_id) {
-      chatId = anyUpdate.chat_id;
-      console.log('[CALLBACK] chatId from anyUpdate.chat_id:', chatId);
+    if (update.message_callback?.chat_id) {
+      chatId = update.message_callback.chat_id;
+      console.log('[CALLBACK] chatId from message_callback.chat_id:', chatId);
     } else if (anyUpdate.message_callback?.chat_id) {
       chatId = anyUpdate.message_callback.chat_id;
-      console.log('[CALLBACK] chatId from message_callback.chat_id:', chatId);
-    } else if (anyUpdate.message?.recipient?.chat_id) {
-      chatId = anyUpdate.message.recipient.chat_id;
-      console.log('[CALLBACK] chatId from message.recipient.chat_id:', chatId);
-    } else if (anyUpdate.message?.chat_id) {
-      chatId = anyUpdate.message.chat_id;
-      console.log('[CALLBACK] chatId from message.chat_id:', chatId);
+      console.log('[CALLBACK] chatId from anyUpdate.message_callback.chat_id:', chatId);
+    } else if (anyUpdate.chat_id) {
+      chatId = anyUpdate.chat_id;
+      console.log('[CALLBACK] chatId from anyUpdate.chat_id:', chatId);
     }
     console.log('[CALLBACK] FINAL chatId:', chatId);
 
-    // Извлекаем payload
+    // Извлекаем payload - ПРИОРИТЕТ: message_callback.payload
     let payload = '';
-    if (update.callback?.payload) {
+    if (update.message_callback?.payload) {
+      payload = update.message_callback.payload;
+      console.log('[CALLBACK] payload from message_callback.payload:', payload);
+    } else if (anyUpdate.message_callback?.payload) {
+      payload = anyUpdate.message_callback.payload;
+      console.log('[CALLBACK] payload from anyUpdate.message_callback.payload:', payload);
+    } else if (update.callback?.payload) {
       payload = update.callback.payload;
       console.log('[CALLBACK] payload from update.callback:', payload);
     } else if (anyUpdate.payload) {
       payload = anyUpdate.payload;
       console.log('[CALLBACK] payload from anyUpdate:', payload);
-    } else if (anyUpdate.message_callback?.payload) {
-      payload = anyUpdate.message_callback.payload;
-      console.log('[CALLBACK] payload from message_callback:', payload);
     }
     console.log('[CALLBACK] FINAL payload:', payload);
 
     // Извлекаем callback_id для ответа
     let callbackId = '';
-    if (update.callback?.id) {
+    if (update.message_callback?.callback_id) {
+      callbackId = update.message_callback.callback_id;
+    } else if (anyUpdate.message_callback?.callback_id) {
+      callbackId = anyUpdate.message_callback.callback_id;
+    } else if (update.callback?.id) {
       callbackId = update.callback.id;
     } else if (anyUpdate.callback_id) {
       callbackId = anyUpdate.callback_id;
-    } else if (anyUpdate.message_callback?.callback_id) {
-      callbackId = anyUpdate.message_callback.callback_id;
     }
+    console.log('[CALLBACK] callback_id:', callbackId);
 
     // Отвечаем на callback
     if (callbackId) {
