@@ -118,7 +118,7 @@ export type BotState =
   | 'editing_date'
   | 'editing_time'
   | 'editing_description'
-  | 'editing_month_day'   // ← ДОБАВИТЬ ЭТУ СТРОКУ!
+  | 'editing_month_day'
   | 'editing_period'
   | 'editing_repeat';
 
