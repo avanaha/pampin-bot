@@ -59,8 +59,63 @@ export function getCurrentDateTimeInTimezone(timezone: string): Date {
 }
 
 /**
- * Parse date from various formats
- * Primary format: DD/MM/YYYY (e.g., 05/03/2026 = March 5, 2026)
+ * Get days in month
+ */
+export function getDaysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * Check if year is leap year
+ */
+export function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
+/**
+ * Validate date components
+ */
+export function validateDateComponents(day: number, month: number, year: number): { valid: boolean; error?: string } {
+  // Check year
+  if (year < 2020) {
+    return { valid: false, error: `Год должен быть не меньше 2020. Вы ввели: ${year}` };
+  }
+  if (year > 2100) {
+    return { valid: false, error: `Год должен быть не больше 2100. Вы ввели: ${year}` };
+  }
+  
+  // Check month
+  if (month < 1 || month > 12) {
+    return { valid: false, error: `Месяц должен быть от 1 до 12. Вы ввели: ${month}` };
+  }
+  
+  // Check day
+  if (day < 1) {
+    return { valid: false, error: `День должен быть не меньше 1. Вы ввели: ${day}` };
+  }
+  
+  const daysInMonth = getDaysInMonth(year, month - 1);
+  if (day > daysInMonth) {
+    return { valid: false, error: `В ${getMonthName(month - 1)} ${year} года только ${daysInMonth} дней. Вы ввели: ${day}` };
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * Get month name in Russian
+ */
+export function getMonthName(month: number): string {
+  const months = [
+    'январе', 'феврале', 'марте', 'апреле', 'мае', 'июне',
+    'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'
+  ];
+  return months[month];
+}
+
+/**
+ * Parse date from various formats with strict validation
+ * Primary format: DD/MM/YYYY (e.g., 01/04/2026 = April 1, 2026)
  */
 export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Date | null {
   const trimmedInput = input.trim();
@@ -92,7 +147,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
   let match = trimmedInput.match(slashPattern);
   if (match) {
     day = parseInt(match[1], 10);
-    month = parseInt(match[2], 10) - 1;
+    month = parseInt(match[2], 10);
     year = parseInt(match[3], 10);
     matched = true;
   }
@@ -102,7 +157,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     match = trimmedInput.match(dotPattern);
     if (match) {
       day = parseInt(match[1], 10);
-      month = parseInt(match[2], 10) - 1;
+      month = parseInt(match[2], 10);
       year = parseInt(match[3], 10);
       matched = true;
     }
@@ -113,7 +168,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     match = trimmedInput.match(dashPattern);
     if (match) {
       day = parseInt(match[1], 10);
-      month = parseInt(match[2], 10) - 1;
+      month = parseInt(match[2], 10);
       year = parseInt(match[3], 10);
       matched = true;
     }
@@ -124,7 +179,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     match = trimmedInput.match(isoPattern);
     if (match) {
       year = parseInt(match[1], 10);
-      month = parseInt(match[2], 10) - 1;
+      month = parseInt(match[2], 10);
       day = parseInt(match[3], 10);
       matched = true;
     }
@@ -136,7 +191,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     if (match) {
       day = parseInt(match[1], 10);
       const monthName = match[2].toLowerCase();
-      month = monthNames.indexOf(monthName);
+      month = monthNames.indexOf(monthName) + 1;
       year = parseInt(match[3], 10);
       matched = true;
     }
@@ -149,13 +204,17 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
       year += 2000;
     }
     
-    // Validate
-    if (month >= 0 && month <= 11 && day >= 1 && day <= 31 && year >= 2020) {
-      // Create date in user's timezone
-      const date = createDateInTimezone(year, month, day, 0, 0, timezone);
-      if (isValidDate(date)) {
-        return date;
-      }
+    // Validate date components
+    const validation = validateDateComponents(day, month, year);
+    if (!validation.valid) {
+      console.log(`[DATE] Validation failed: ${validation.error}`);
+      return null;
+    }
+    
+    // Create date in user's timezone (month is 0-indexed in Date constructor)
+    const date = createDateInTimezone(year, month - 1, day, 0, 0, timezone);
+    if (isValidDate(date)) {
+      return date;
     }
   }
 
@@ -182,6 +241,104 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
   }
 
   return null;
+}
+
+/**
+ * Parse date with detailed error message
+ */
+export function parseDateWithFeedback(input: string, timezone: string = 'Europe/Moscow'): { date: Date | null; error?: string } {
+  const trimmedInput = input.trim();
+  
+  if (trimmedInput.length < 6) {
+    return { 
+      date: null, 
+      error: `Слишком короткий ввод. Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026` 
+    };
+  }
+  
+  // Pattern for DD/MM/YYYY format (primary format with slashes)
+  const slashPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+  
+  // Pattern for DD.MM.YYYY format (alternative with dots)
+  const dotPattern = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/;
+  
+  // Pattern for DD-MM-YYYY format (alternative with dashes)
+  const dashPattern = /^(\d{1,2})-(\d{1,2})-(\d{2,4})$/;
+  
+  // Pattern for YYYY-MM-DD (ISO format)
+  const isoPattern = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
+
+  let day: number = 0, month: number = 0, year: number = 0;
+  let matched = false;
+  let match: RegExpMatchArray | null = null;
+
+  // Try slash format first (DD/MM/YYYY) - PRIMARY
+  match = trimmedInput.match(slashPattern);
+  if (match) {
+    day = parseInt(match[1], 10);
+    month = parseInt(match[2], 10);
+    year = parseInt(match[3], 10);
+    matched = true;
+  }
+
+  // Try dot format (DD.MM.YYYY)
+  if (!matched) {
+    match = trimmedInput.match(dotPattern);
+    if (match) {
+      day = parseInt(match[1], 10);
+      month = parseInt(match[2], 10);
+      year = parseInt(match[3], 10);
+      matched = true;
+    }
+  }
+
+  // Try dash format (DD-MM-YYYY)
+  if (!matched) {
+    match = trimmedInput.match(dashPattern);
+    if (match) {
+      day = parseInt(match[1], 10);
+      month = parseInt(match[2], 10);
+      year = parseInt(match[3], 10);
+      matched = true;
+    }
+  }
+
+  // Try ISO format (YYYY-MM-DD)
+  if (!matched) {
+    match = trimmedInput.match(isoPattern);
+    if (match) {
+      year = parseInt(match[1], 10);
+      month = parseInt(match[2], 10);
+      day = parseInt(match[3], 10);
+      matched = true;
+    }
+  }
+
+  // If format not recognized
+  if (!matched) {
+    return { 
+      date: null, 
+      error: `❌ Неверный формат даты.\n\n📅 Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026\n\nВы ввели: ${trimmedInput}` 
+    };
+  }
+
+  // Fix 2-digit year
+  if (year < 100) {
+    year += 2000;
+  }
+  
+  // Validate date components
+  const validation = validateDateComponents(day, month, year);
+  if (!validation.valid) {
+    return { 
+      date: null, 
+      error: `❌ ${validation.error}\n\n📅 Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026` 
+    };
+  }
+  
+  // Create date in user's timezone
+  const date = createDateInTimezone(year, month - 1, day, 0, 0, timezone);
+  return { date };
 }
 
 /**
@@ -438,4 +595,53 @@ export function toTimeString(date: Date): string {
 export function getTodayFormatted(timezone: string = 'Europe/Moscow'): string {
   const today = getCurrentDateTimeInTimezone(timezone);
   return formatDate(today, 'short');
+}
+
+/**
+ * Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
+ */
+export function getDayOfWeek(date: Date): number {
+  return date.getDay();
+}
+
+/**
+ * Get next occurrence of a specific day of week
+ */
+export function getNextDayOfWeek(dayOfWeek: number, timezone: string): Date {
+  const now = getCurrentDateTimeInTimezone(timezone);
+  const currentDay = now.getDay();
+  let daysUntil = dayOfWeek - currentDay;
+  if (daysUntil <= 0) {
+    daysUntil += 7;
+  }
+  const nextDate = new Date(now);
+  nextDate.setDate(nextDate.getDate() + daysUntil);
+  return nextDate;
+}
+
+/**
+ * Add days to a date
+ */
+export function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+/**
+ * Add months to a date
+ */
+export function addMonths(date: Date, months: number): Date {
+  const result = new Date(date);
+  result.setMonth(result.getMonth() + months);
+  return result;
+}
+
+/**
+ * Add years to a date
+ */
+export function addYears(date: Date, years: number): Date {
+  const result = new Date(date);
+  result.setFullYear(result.getFullYear() + years);
+  return result;
 }
