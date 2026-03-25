@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { Reminder, UserSettings, UserSession, Notification } from '../types';
+import { Reminder, UserSettings, UserSession, Notification, RepeatType } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
@@ -62,7 +62,9 @@ function createTables(): void {
       event_time TEXT,
       timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
       reminder_periods TEXT NOT NULL DEFAULT '[]',
-      repeat_yearly INTEGER NOT NULL DEFAULT 0,
+      repeat_type TEXT NOT NULL DEFAULT 'none',
+      repeat_days TEXT,
+      repeat_month_day INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
@@ -119,8 +121,20 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
     CREATE INDEX IF NOT EXISTS idx_notifications_scheduled_at ON notifications(scheduled_at);
   `);
-}
 
+  // Миграция: добавляем новые колонки если их нет
+  try {
+    db.exec(`ALTER TABLE reminders ADD COLUMN repeat_type TEXT NOT NULL DEFAULT 'none'`);
+  } catch (e) { /* колонка уже существует */ }
+  
+  try {
+    db.exec(`ALTER TABLE reminders ADD COLUMN repeat_days TEXT`);
+  } catch (e) { /* колонка уже существует */ }
+  
+  try {
+    db.exec(`ALTER TABLE reminders ADD COLUMN repeat_month_day INTEGER`);
+  } catch (e) { /* колонка уже существует */ }
+}
 // Reminder operations
 export function createReminder(reminder: Omit<Reminder, 'id' | 'created_at' | 'updated_at'>): Reminder {
   const db = getDb();
@@ -130,9 +144,9 @@ export function createReminder(reminder: Omit<Reminder, 'id' | 'created_at' | 'u
   const stmt = db.prepare(`
     INSERT INTO reminders (
       id, user_id, chat_id, title, description, event_date, event_time,
-      timezone, reminder_periods, repeat_yearly, created_at, updated_at,
-      is_active, last_notification, next_notification
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      timezone, reminder_periods, repeat_type, repeat_days, repeat_month_day,
+      created_at, updated_at, is_active, last_notification, next_notification
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -145,7 +159,9 @@ export function createReminder(reminder: Omit<Reminder, 'id' | 'created_at' | 'u
     reminder.event_time || null,
     reminder.timezone,
     JSON.stringify(reminder.reminder_periods),
-    reminder.repeat_yearly ? 1 : 0,
+    reminder.repeat_type || 'none',
+    reminder.repeat_days ? JSON.stringify(reminder.repeat_days) : null,
+    reminder.repeat_month_day || null,
     now,
     now,
     reminder.is_active ? 1 : 0,
@@ -210,9 +226,17 @@ export function updateReminder(id: string, updates: Partial<Reminder>): Reminder
     fields.push('reminder_periods = ?');
     values.push(JSON.stringify(updates.reminder_periods));
   }
-  if (updates.repeat_yearly !== undefined) {
-    fields.push('repeat_yearly = ?');
-    values.push(updates.repeat_yearly ? 1 : 0);
+  if (updates.repeat_type !== undefined) {
+    fields.push('repeat_type = ?');
+    values.push(updates.repeat_type);
+  }
+  if (updates.repeat_days !== undefined) {
+    fields.push('repeat_days = ?');
+    values.push(updates.repeat_days ? JSON.stringify(updates.repeat_days) : null);
+  }
+  if (updates.repeat_month_day !== undefined) {
+    fields.push('repeat_month_day = ?');
+    values.push(updates.repeat_month_day || null);
   }
   if (updates.is_active !== undefined) {
     fields.push('is_active = ?');
@@ -279,197 +303,4 @@ export function deleteReminderPermanently(id: string): boolean {
   const stmt = db.prepare('DELETE FROM reminders WHERE id = ?');
   const result = stmt.run(id);
   return result.changes > 0;
-}
-
-// User settings operations
-export function getUserSettings(userId: number, chatId: number): UserSettings | null {
-  const db = getDb();
-  const stmt = db.prepare('SELECT * FROM user_settings WHERE user_id = ? AND chat_id = ?');
-  const row = stmt.get(userId, chatId) as any;
-  
-  if (!row) return null;
-  return {
-    user_id: row.user_id,
-    chat_id: row.chat_id,
-    timezone: row.timezone,
-    language: row.language,
-    default_periods: JSON.parse(row.default_periods),
-    created_at: new Date(row.created_at),
-    updated_at: new Date(row.updated_at)
-  };
-}
-
-export function upsertUserSettings(settings: Partial<UserSettings> & { user_id: number; chat_id: number }): UserSettings {
-  const db = getDb();
-  const now = new Date().toISOString();
-  const existing = getUserSettings(settings.user_id, settings.chat_id);
-
-  if (existing) {
-    const stmt = db.prepare(`
-      UPDATE user_settings 
-      SET timezone = ?, language = ?, default_periods = ?, updated_at = ?
-      WHERE user_id = ? AND chat_id = ?
-    `);
-    stmt.run(
-      settings.timezone || existing.timezone,
-      settings.language || existing.language,
-      JSON.stringify(settings.default_periods || existing.default_periods),
-      now,
-      settings.user_id,
-      settings.chat_id
-    );
-  } else {
-    const stmt = db.prepare(`
-      INSERT INTO user_settings (user_id, chat_id, timezone, language, default_periods, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      settings.user_id,
-      settings.chat_id,
-      settings.timezone || 'Europe/Moscow',
-      settings.language || 'ru',
-      JSON.stringify(settings.default_periods || []),
-      now,
-      now
-    );
-  }
-
-  return getUserSettings(settings.user_id, settings.chat_id)!;
-}
-
-// User session operations
-export function getUserSession(userId: number, chatId: number): UserSession {
-  const db = getDb();
-  const stmt = db.prepare('SELECT * FROM user_sessions WHERE user_id = ? AND chat_id = ?');
-  const row = stmt.get(userId, chatId) as any;
-  
-  if (row) {
-    return {
-      user_id: row.user_id,
-      chat_id: row.chat_id,
-      state: row.state as UserSession['state'],
-      data: JSON.parse(row.data),
-      last_activity: new Date(row.last_activity)
-    };
-  }
-
-  // Create new session
-  const now = new Date().toISOString();
-  const insertStmt = db.prepare(`
-    INSERT INTO user_sessions (user_id, chat_id, state, data, last_activity)
-    VALUES (?, ?, 'idle', '{}', ?)
-  `);
-  insertStmt.run(userId, chatId, now);
-
-  return {
-    user_id: userId,
-    chat_id: chatId,
-    state: 'idle',
-    data: {},
-    last_activity: new Date(now)
-  };
-}
-
-export function updateUserSession(userId: number, chatId: number, updates: Partial<UserSession>): UserSession {
-  const db = getDb();
-  const now = new Date().toISOString();
-
-  const fields: string[] = ['last_activity = ?'];
-  const values: any[] = [now];
-
-  if (updates.state !== undefined) {
-    fields.push('state = ?');
-    values.push(updates.state);
-  }
-  if (updates.data !== undefined) {
-    fields.push('data = ?');
-    values.push(JSON.stringify(updates.data));
-  }
-
-  values.push(userId, chatId);
-
-  const stmt = db.prepare(`UPDATE user_sessions SET ${fields.join(', ')} WHERE user_id = ? AND chat_id = ?`);
-  stmt.run(...values);
-
-  return getUserSession(userId, chatId);
-}
-
-export function clearUserSession(userId: number, chatId: number): void {
-  const db = getDb();
-  const now = new Date().toISOString();
-  const stmt = db.prepare(`UPDATE user_sessions SET state = 'idle', data = '{}', last_activity = ? WHERE user_id = ? AND chat_id = ?`);
-  stmt.run(now, userId, chatId);
-}
-
-// Notification operations
-export function createNotification(notification: Omit<Notification, 'id'>): Notification {
-  const db = getDb();
-  const id = uuidv4();
-
-  const stmt = db.prepare(`
-    INSERT INTO notifications (id, reminder_id, scheduled_at, sent_at, status, period_ms, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    id,
-    notification.reminder_id,
-    notification.scheduled_at.toISOString(),
-    notification.sent_at?.toISOString() || null,
-    notification.status,
-    notification.period_ms,
-    notification.error_message || null
-  );
-
-  return { ...notification, id };
-}
-
-export function getPendingNotifications(): Notification[] {
-  const db = getDb();
-  const stmt = db.prepare("SELECT * FROM notifications WHERE status = 'pending' ORDER BY scheduled_at ASC");
-  const rows = stmt.all() as any[];
-  return rows.map(rowToNotification);
-}
-
-export function updateNotificationStatus(id: string, status: Notification['status'], errorMessage?: string): void {
-  const db = getDb();
-  const stmt = db.prepare(`
-    UPDATE notifications 
-    SET status = ?, sent_at = ?, error_message = ?
-    WHERE id = ?
-  `);
-  stmt.run(status, status === 'sent' ? new Date().toISOString() : null, errorMessage || null, id);
-}
-
-// Helper functions
-function rowToReminder(row: any): Reminder {
-  return {
-    id: row.id,
-    user_id: row.user_id,
-    chat_id: row.chat_id,
-    title: row.title,
-    description: row.description || undefined,
-    event_date: row.event_date,
-    event_time: row.event_time || undefined,
-    timezone: row.timezone,
-    reminder_periods: JSON.parse(row.reminder_periods),
-    repeat_yearly: row.repeat_yearly === 1,
-    created_at: new Date(row.created_at),
-    updated_at: new Date(row.updated_at),
-    is_active: row.is_active === 1,
-    last_notification: row.last_notification ? new Date(row.last_notification) : undefined,
-    next_notification: row.next_notification ? new Date(row.next_notification) : undefined
-  };
-}
-
-function rowToNotification(row: any): Notification {
-  return {
-    id: row.id,
-    reminder_id: row.reminder_id,
-    scheduled_at: new Date(row.scheduled_at),
-    sent_at: row.sent_at ? new Date(row.sent_at) : undefined,
-    status: row.status as Notification['status'],
-    period_ms: row.period_ms,
-    error_message: row.error_message || undefined
-  };
 }
