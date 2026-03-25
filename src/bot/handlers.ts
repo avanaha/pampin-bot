@@ -47,7 +47,6 @@ const PREDEFINED_PERIODS = [
 export class PamPinBot {
   private api: MaxApi;
   private groupId: number;
-  // Временное хранилище сессий в памяти (для отладки)
   private sessions: Map<string, UserSession> = new Map();
 
   constructor(token: string, groupId: number) {
@@ -55,32 +54,23 @@ export class PamPinBot {
     this.groupId = groupId;
   }
 
-  // Ключ для сессии
   private getSessionKey(userId: number, chatId: number): string {
     return `${userId}:${chatId}`;
   }
 
-  // Получить сессию (сначала из памяти, потом из БД)
   private getSession(userId: number, chatId: number): UserSession {
     const key = this.getSessionKey(userId, chatId);
-    
-    // Сначала проверяем память
     if (this.sessions.has(key)) {
       console.log(`[SESSION] Found in MEMORY: ${key}`);
       return this.sessions.get(key)!;
     }
-    
-    // Потом БД
     const dbSession = getUserSession(userId, chatId);
     console.log(`[SESSION] From DB: ${key}, state=${dbSession.state}`);
     return dbSession;
   }
 
-  // Сохранить сессию
   private saveSession(userId: number, chatId: number, session: Partial<UserSession>): UserSession {
     const key = this.getSessionKey(userId, chatId);
-    
-    // Сохраняем в память
     const current = this.getSession(userId, chatId);
     const updated: UserSession = {
       ...current,
@@ -88,15 +78,11 @@ export class PamPinBot {
       last_activity: new Date()
     };
     this.sessions.set(key, updated);
-    
-    // Также сохраняем в БД
-    const dbSession = updateUserSession(userId, chatId, session);
-    
+    updateUserSession(userId, chatId, session);
     console.log(`[SESSION] SAVED: ${key}, state=${updated.state}`);
     return updated;
   }
 
-  // Очистить сессию
   private clearSession(userId: number, chatId: number): void {
     const key = this.getSessionKey(userId, chatId);
     this.sessions.delete(key);
@@ -114,7 +100,6 @@ export class PamPinBot {
 
     try {
       const updateType = update?.update_type;
-      
       if (!updateType) {
         console.log('[PROCESS] ERROR: No update_type!');
         return;
@@ -140,11 +125,9 @@ export class PamPinBot {
 
   private async handleBotStarted(update: Update): Promise<void> {
     console.log('[BOT_STARTED]');
-    
     const anyUpdate = update as any;
     const userId = update.sender?.user_id || anyUpdate.user?.user_id || 0;
     const chatId = anyUpdate.chat_id || 0;
-    
     console.log('[BOT_STARTED] userId:', userId, 'chatId:', chatId);
 
     const text = `👋 *Добро пожаловать в PamPin!*
@@ -161,7 +144,6 @@ export class PamPinBot {
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
-
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
@@ -169,19 +151,13 @@ export class PamPinBot {
     console.log('[MESSAGE] === START ===');
     console.log('[MESSAGE] FULL JSON:', JSON.stringify(update, null, 2));
 
-    const anyUpdate = update as any;
     const message = update.message;
-
     if (!message) {
       console.log('[MESSAGE] No message!');
       return;
     }
 
-    // ВАЖНО: При message_created в MAX API:
-    // - message.sender - это отправитель сообщения (пользователь)
-    // - message.recipient - это получатель (бот)
-
-    // Извлекаем userId из sender (отправитель = пользователь)
+    // При message_created: message.sender = пользователь
     let userId = 0;
     if (message.sender?.user_id) {
       userId = message.sender.user_id;
@@ -192,7 +168,6 @@ export class PamPinBot {
     }
     console.log('[MESSAGE] FINAL userId:', userId);
 
-    // Извлекаем chatId из recipient
     let chatId = 0;
     if (message.recipient?.chat_id) {
       chatId = message.recipient.chat_id;
@@ -203,7 +178,6 @@ export class PamPinBot {
     }
     console.log('[MESSAGE] FINAL chatId:', chatId);
 
-    // Извлекаем текст
     let text = '';
     if (message.body?.text) {
       text = message.body.text;
@@ -217,18 +191,15 @@ export class PamPinBot {
       return;
     }
 
-    // Обрабатываем команды
     if (text.trim().startsWith('/')) {
       await this.handleCommand(userId, chatId, text.trim());
       return;
     }
 
-    // Получаем сессию
     const session = this.getSession(userId, chatId);
     console.log('[MESSAGE] Session state:', session.state);
     console.log('[MESSAGE] Session data:', JSON.stringify(session.data));
 
-    // Обрабатываем по состоянию
     switch (session.state) {
       case 'waiting_for_title':
         console.log('[MESSAGE] -> Calling handleTitleInput');
@@ -285,12 +256,12 @@ export class PamPinBot {
 
     const anyUpdate = update as any;
 
-    // ВАЖНО: При message_callback в MAX API:
-    // - update.message_callback.user - это пользователь, нажавший кнопку
-    // - update.sender - это БОТ (отправитель сообщения с кнопками)
-    // Поэтому нужно брать userId из message_callback.user!
+    // ВАЖНО: При message_callback в MAX API структура может быть разной:
+    // Вариант 1: update.message_callback.user - пользователь, нажавший кнопку
+    // Вариант 2: update.callback.user - пользователь, нажавший кнопку
+    // update.sender - это всегда БОТ (отправитель сообщения с кнопками)
 
-    // Извлекаем userId - ПРИОРИТЕТ: message_callback.user
+    // Извлекаем userId - пробуем все варианты
     let userId = 0;
     if (update.message_callback?.user?.user_id) {
       userId = update.message_callback.user.user_id;
@@ -307,7 +278,7 @@ export class PamPinBot {
     }
     console.log('[CALLBACK] FINAL userId:', userId);
 
-    // Извлекаем chatId - ПРИОРИТЕТ: message_callback.chat_id
+    // Извлекаем chatId - пробуем ВСЕ возможные места
     let chatId = 0;
     if (update.message_callback?.chat_id) {
       chatId = update.message_callback.chat_id;
@@ -315,13 +286,31 @@ export class PamPinBot {
     } else if (anyUpdate.message_callback?.chat_id) {
       chatId = anyUpdate.message_callback.chat_id;
       console.log('[CALLBACK] chatId from anyUpdate.message_callback.chat_id:', chatId);
+    } else if (update.callback?.chat_id) {
+      chatId = update.callback.chat_id;
+      console.log('[CALLBACK] chatId from callback.chat_id:', chatId);
+    } else if (anyUpdate.callback?.chat_id) {
+      chatId = anyUpdate.callback.chat_id;
+      console.log('[CALLBACK] chatId from anyUpdate.callback.chat_id:', chatId);
+    } else if (update.callback?.message?.recipient?.chat_id) {
+      chatId = update.callback.message.recipient.chat_id;
+      console.log('[CALLBACK] chatId from callback.message.recipient.chat_id:', chatId);
+    } else if (anyUpdate.callback?.message?.recipient?.chat_id) {
+      chatId = anyUpdate.callback.message.recipient.chat_id;
+      console.log('[CALLBACK] chatId from anyUpdate.callback.message.recipient.chat_id:', chatId);
+    } else if (update.message?.recipient?.chat_id) {
+      chatId = update.message.recipient.chat_id;
+      console.log('[CALLBACK] chatId from message.recipient.chat_id:', chatId);
+    } else if (anyUpdate.message?.recipient?.chat_id) {
+      chatId = anyUpdate.message.recipient.chat_id;
+      console.log('[CALLBACK] chatId from anyUpdate.message.recipient.chat_id:', chatId);
     } else if (anyUpdate.chat_id) {
       chatId = anyUpdate.chat_id;
       console.log('[CALLBACK] chatId from anyUpdate.chat_id:', chatId);
     }
     console.log('[CALLBACK] FINAL chatId:', chatId);
 
-    // Извлекаем payload - ПРИОРИТЕТ: message_callback.payload
+    // Извлекаем payload
     let payload = '';
     if (update.message_callback?.payload) {
       payload = update.message_callback.payload;
@@ -467,7 +456,6 @@ export class PamPinBot {
 
   private async sendWelcome(chatId: number): Promise<void> {
     console.log('[WELCOME] chatId:', chatId);
-    
     const text = `👋 *Добро пожаловать в PamPin!*
 
 📅 Я помогу вам не забыть о важных датах.
@@ -482,29 +470,24 @@ export class PamPinBot {
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
-
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
   private async showMainMenu(chatId: number): Promise<void> {
     console.log('[MENU] chatId:', chatId);
-    
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
-
     await this.api.sendMessageWithKeyboard(chatId, '🏠 *Главное меню*', buttons, 'markdown');
   }
 
   private async startAddReminder(userId: number, chatId: number): Promise<void> {
     console.log('[ADD] userId:', userId, 'chatId:', chatId);
-    
     const settings = getUserSettings(userId, chatId);
     const tz = settings?.timezone || 'Europe/Moscow';
 
-    // Сохраняем сессию
     this.saveSession(userId, chatId, {
       state: 'waiting_for_title',
       data: {
@@ -514,7 +497,6 @@ export class PamPinBot {
       }
     });
 
-    // Проверяем что сохранилось
     const check = this.getSession(userId, chatId);
     console.log('[ADD] After save, session state:', check.state);
 
@@ -534,13 +516,11 @@ export class PamPinBot {
       return;
     }
 
-    // Сохраняем
     this.saveSession(userId, chatId, {
       state: 'waiting_for_date',
       data: { ...session.data, temp_title: text }
     });
 
-    // Проверяем
     const check = this.getSession(userId, chatId);
     console.log('[TITLE] After save, session state:', check.state, 'title:', check.data?.temp_title);
 
@@ -782,7 +762,6 @@ export class PamPinBot {
 
   private async showRemindersList(userId: number, chatId: number): Promise<void> {
     console.log('[LIST] userId:', userId, 'chatId:', chatId);
-    
     const reminders = getRemindersByUser(userId, chatId);
     console.log('[LIST] Found:', reminders.length);
 
@@ -879,7 +858,6 @@ export class PamPinBot {
   private async confirmArchive(chatId: number, id: string): Promise<void> {
     const r = getReminderById(id);
     if (!r) return;
-
     await this.api.sendMessageWithKeyboard(
       chatId,
       `📦 Переместить "${r.title}" в архив?`,
@@ -906,7 +884,6 @@ export class PamPinBot {
   private async confirmRestore(chatId: number, id: string): Promise<void> {
     const r = getReminderById(id);
     if (!r) return;
-
     await this.api.sendMessageWithKeyboard(
       chatId,
       `↩️ Восстановить "${r.title}"?`,
@@ -927,7 +904,6 @@ export class PamPinBot {
   private async confirmDelete(chatId: number, id: string): Promise<void> {
     const r = getReminderById(id);
     if (!r) return;
-
     await this.api.sendMessageWithKeyboard(
       chatId,
       `⚠️ Удалить "${r.title}" навсегда?`,
@@ -972,7 +948,6 @@ export class PamPinBot {
       callbackButton(tz.label, `set_timezone:${tz.value}`)
     ]);
     buttons.push([callbackButton('◀️ Назад', 'settings')]);
-
     await this.api.sendMessageWithKeyboard(chatId, '🌐 *Выберите часовой пояс:*', buttons, 'markdown');
   }
 
