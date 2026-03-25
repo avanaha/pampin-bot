@@ -30,17 +30,14 @@ export function getCurrentDateInTimezone(timezone: string): Date {
   const now = new Date();
   const offset = getTimezoneOffset(timezone);
   
-  // Get UTC time and add offset
   const utcHours = now.getUTCHours();
   const utcDate = now.getUTCDate();
   const utcMonth = now.getUTCMonth();
   const utcYear = now.getUTCFullYear();
   
-  // Create date in timezone
   const tzDate = new Date(Date.UTC(utcYear, utcMonth, utcDate, 0, 0, 0, 0));
   tzDate.setUTCHours(utcHours + offset);
   
-  // Return just the date part
   return new Date(tzDate.getFullYear(), tzDate.getMonth(), tzDate.getDate());
 }
 
@@ -51,7 +48,6 @@ export function getCurrentDateTimeInTimezone(timezone: string): Date {
   const now = new Date();
   const offset = getTimezoneOffset(timezone);
   
-  // Convert to timezone
   const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
   const tzTime = utcTime + (offset * 3600000);
   
@@ -76,7 +72,6 @@ export function isLeapYear(year: number): boolean {
  * Validate date components
  */
 export function validateDateComponents(day: number, month: number, year: number): { valid: boolean; error?: string } {
-  // Check year
   if (year < 2020) {
     return { valid: false, error: `Год должен быть не меньше 2020. Вы ввели: ${year}` };
   }
@@ -84,12 +79,10 @@ export function validateDateComponents(day: number, month: number, year: number)
     return { valid: false, error: `Год должен быть не больше 2100. Вы ввели: ${year}` };
   }
   
-  // Check month
   if (month < 1 || month > 12) {
     return { valid: false, error: `Месяц должен быть от 1 до 12. Вы ввели: ${month}` };
   }
   
-  // Check day
   if (day < 1) {
     return { valid: false, error: `День должен быть не меньше 1. Вы ввели: ${day}` };
   }
@@ -115,24 +108,14 @@ export function getMonthName(month: number): string {
 
 /**
  * Parse date from various formats with strict validation
- * Primary format: DD/MM/YYYY (e.g., 01/04/2026 = April 1, 2026)
  */
 export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Date | null {
   const trimmedInput = input.trim();
   
-  // Pattern for DD/MM/YYYY format (primary format with slashes)
   const slashPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
-  
-  // Pattern for DD.MM.YYYY format (alternative with dots)
   const dotPattern = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/;
-  
-  // Pattern for DD-MM-YYYY format (alternative with dashes)
   const dashPattern = /^(\d{1,2})-(\d{1,2})-(\d{2,4})$/;
-  
-  // Pattern for YYYY-MM-DD (ISO format)
   const isoPattern = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
-  
-  // Pattern for "DD month YYYY" in Russian
   const russianMonthPattern = /^(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{2,4})$/i;
 
   const monthNames = [
@@ -143,7 +126,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
   let day: number = 0, month: number = 0, year: number = 0;
   let matched = false;
 
-  // Try slash format first (DD/MM/YYYY) - PRIMARY
   let match = trimmedInput.match(slashPattern);
   if (match) {
     day = parseInt(match[1], 10);
@@ -152,7 +134,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     matched = true;
   }
 
-  // Try dot format (DD.MM.YYYY)
   if (!matched) {
     match = trimmedInput.match(dotPattern);
     if (match) {
@@ -163,7 +144,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     }
   }
 
-  // Try dash format (DD-MM-YYYY)
   if (!matched) {
     match = trimmedInput.match(dashPattern);
     if (match) {
@@ -174,7 +154,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     }
   }
 
-  // Try ISO format (YYYY-MM-DD)
   if (!matched) {
     match = trimmedInput.match(isoPattern);
     if (match) {
@@ -185,7 +164,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     }
   }
 
-  // Try Russian month format
   if (!matched) {
     match = trimmedInput.match(russianMonthPattern);
     if (match) {
@@ -197,28 +175,23 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
     }
   }
 
-  // If manual parsing succeeded
   if (matched) {
-    // Fix 2-digit year
     if (year < 100) {
       year += 2000;
     }
     
-    // Validate date components
     const validation = validateDateComponents(day, month, year);
     if (!validation.valid) {
       console.log(`[DATE] Validation failed: ${validation.error}`);
       return null;
     }
     
-    // Create date in user's timezone (month is 0-indexed in Date constructor)
     const date = createDateInTimezone(year, month - 1, day, 0, 0, timezone);
     if (isValidDate(date)) {
       return date;
     }
   }
 
-  // Try chrono-node for natural language parsing (relative dates)
   try {
     const results = chrono.ru.parse(input, new Date(), { 
       forwardDate: true,
@@ -229,7 +202,6 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
       const result = results[0];
       const date = result.start.date();
       
-      // If only date without time, set time to 00:00
       if (!result.start.isCertain('hour')) {
         date.setHours(0, 0, 0, 0);
       }
@@ -237,7 +209,7 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
       return date;
     }
   } catch (e) {
-    // chrono-node failed, return null
+    // chrono-node failed
   }
 
   return null;
@@ -256,23 +228,15 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     };
   }
   
-  // Pattern for DD/MM/YYYY format (primary format with slashes)
   const slashPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
-  
-  // Pattern for DD.MM.YYYY format (alternative with dots)
   const dotPattern = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/;
-  
-  // Pattern for DD-MM-YYYY format (alternative with dashes)
   const dashPattern = /^(\d{1,2})-(\d{1,2})-(\d{2,4})$/;
-  
-  // Pattern for YYYY-MM-DD (ISO format)
   const isoPattern = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
 
   let day: number = 0, month: number = 0, year: number = 0;
   let matched = false;
   let match: RegExpMatchArray | null = null;
 
-  // Try slash format first (DD/MM/YYYY) - PRIMARY
   match = trimmedInput.match(slashPattern);
   if (match) {
     day = parseInt(match[1], 10);
@@ -281,7 +245,6 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     matched = true;
   }
 
-  // Try dot format (DD.MM.YYYY)
   if (!matched) {
     match = trimmedInput.match(dotPattern);
     if (match) {
@@ -292,7 +255,6 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     }
   }
 
-  // Try dash format (DD-MM-YYYY)
   if (!matched) {
     match = trimmedInput.match(dashPattern);
     if (match) {
@@ -303,7 +265,6 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     }
   }
 
-  // Try ISO format (YYYY-MM-DD)
   if (!matched) {
     match = trimmedInput.match(isoPattern);
     if (match) {
@@ -314,7 +275,6 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     }
   }
 
-  // If format not recognized
   if (!matched) {
     return { 
       date: null, 
@@ -322,12 +282,10 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     };
   }
 
-  // Fix 2-digit year
   if (year < 100) {
     year += 2000;
   }
   
-  // Validate date components
   const validation = validateDateComponents(day, month, year);
   if (!validation.valid) {
     return { 
@@ -336,7 +294,6 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
     };
   }
   
-  // Create date in user's timezone
   const date = createDateInTimezone(year, month - 1, day, 0, 0, timezone);
   return { date };
 }
@@ -353,27 +310,18 @@ export function createDateInTimezone(
   timezone: string
 ): Date {
   const offset = getTimezoneOffset(timezone);
-  
-  // Create date in UTC, then subtract timezone offset to get the desired local time
   const utcDate = new Date(Date.UTC(year, month, day, hours - offset, minutes, 0, 0));
-  
   return utcDate;
 }
 
 /**
  * Parse time from string
- * Format: HH-MM (e.g., 14-30 for 2:30 PM) or HH:MM
  */
 export function parseTime(input: string): { hours: number; minutes: number } | null {
   const trimmedInput = input.trim();
   
-  // Pattern for HH-MM (primary format with dash)
   const dashPattern = /^(\d{1,2})-(\d{2})$/;
-  
-  // Pattern for HH:MM (alternative with colon)
   const colonPattern = /^(\d{1,2}):(\d{2})$/;
-  
-  // Pattern for HH.MM (alternative with dot)
   const dotPattern = /^(\d{1,2})\.(\d{2})$/;
   
   let match = trimmedInput.match(dashPattern);
@@ -402,20 +350,17 @@ export function isValidDate(date: Date): boolean {
 }
 
 /**
- * Check if date is in the past (considering timezone)
+ * Check if date is in the past
  */
 export function isDateInPast(date: Date, timezone: string = 'Europe/Moscow'): boolean {
   const now = getCurrentDateTimeInTimezone(timezone);
-  
-  // Compare only dates (not time)
   const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  
   return dateOnly < nowOnly;
 }
 
 /**
- * Check if date is today (considering timezone)
+ * Check if date is today
  */
 export function isToday(date: Date, timezone: string = 'Europe/Moscow'): boolean {
   const now = getCurrentDateTimeInTimezone(timezone);
@@ -439,7 +384,6 @@ export function formatDate(date: Date, format: 'short' | 'long' | 'full' = 'shor
 
   switch (format) {
     case 'short':
-      // DD/MM/YYYY - primary format
       return `${day.toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${year}`;
     case 'long':
       return `${day} ${month} ${year}`;
@@ -451,7 +395,7 @@ export function formatDate(date: Date, format: 'short' | 'long' | 'full' = 'shor
 }
 
 /**
- * Format time for display (HH-MM)
+ * Format time for display
  */
 export function formatTime(hours: number, minutes: number): string {
   return `${hours.toString().padStart(2, '0')}-${minutes.toString().padStart(2, '0')}`;
@@ -546,12 +490,7 @@ export function pluralize(n: number, one: string, few: string, many: string): st
  * Calculate next notification time
  */
 export function calculateNextNotification(eventDate: Date, periodMs: number, timezone: string): Date {
-  // Get event datetime in timezone
-  const offset = getTimezoneOffset(timezone);
-  
-  // Calculate notification time
   const notificationTime = new Date(eventDate.getTime() - periodMs);
-  
   return notificationTime;
 }
 
@@ -561,7 +500,6 @@ export function calculateNextNotification(eventDate: Date, periodMs: number, tim
 export function shouldSendNotification(scheduledTime: Date, timezone: string): boolean {
   const now = getCurrentDateTimeInTimezone(timezone);
   const diff = scheduledTime.getTime() - now.getTime();
-  // Send if within 1 minute of scheduled time
   return diff <= 60000 && diff > -60000;
 }
 
