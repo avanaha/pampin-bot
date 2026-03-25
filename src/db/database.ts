@@ -10,7 +10,6 @@ let db: Database.Database | null = null;
  * Initialize database
  */
 export function initDatabase(dbPath: string): Database.Database {
-  // Ensure directory exists
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -91,6 +90,7 @@ function createTables(): void {
       PRIMARY KEY (user_id, chat_id)
     );
   `);
+
   // User sessions table
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_sessions (
@@ -194,6 +194,7 @@ export function getAllActiveReminders(): Reminder[] {
   const rows = stmt.all() as any[];
   return rows.map(rowToReminder);
 }
+
 export function updateReminder(id: string, updates: Partial<Reminder>): Reminder | null {
   const db = getDb();
   const now = new Date().toISOString();
@@ -265,7 +266,6 @@ export function deleteReminder(id: string): boolean {
   return result.changes > 0;
 }
 
-// Archive reminder (soft delete with is_active = 0)
 export function archiveReminder(id: string): boolean {
   const db = getDb();
   const now = new Date().toISOString();
@@ -274,7 +274,6 @@ export function archiveReminder(id: string): boolean {
   return result.changes > 0;
 }
 
-// Restore reminder from archive (set is_active = 1)
 export function restoreReminder(id: string): boolean {
   const db = getDb();
   const now = new Date().toISOString();
@@ -283,7 +282,6 @@ export function restoreReminder(id: string): boolean {
   return result.changes > 0;
 }
 
-// Get archived reminders by user
 export function getArchivedRemindersByUser(userId: number, chatId: number): Reminder[] {
   const db = getDb();
   const stmt = db.prepare('SELECT * FROM reminders WHERE user_id = ? AND chat_id = ? AND is_active = 0 ORDER BY event_date DESC');
@@ -291,18 +289,16 @@ export function getArchivedRemindersByUser(userId: number, chatId: number): Remi
   return rows.map(rowToReminder);
 }
 
-// Permanently delete reminder
 export function deleteReminderPermanently(id: string): boolean {
   const db = getDb();
-  // First delete related notifications
   const deleteNotifications = db.prepare('DELETE FROM notifications WHERE reminder_id = ?');
   deleteNotifications.run(id);
   
-  // Then delete the reminder
   const stmt = db.prepare('DELETE FROM reminders WHERE id = ?');
   const result = stmt.run(id);
   return result.changes > 0;
 }
+
 // User settings operations
 export function getUserSettings(userId: number, chatId: number): UserSettings | null {
   const db = getDb();
@@ -375,7 +371,6 @@ export function getUserSession(userId: number, chatId: number): UserSession {
     };
   }
 
-  // Create new session
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO user_sessions (user_id, chat_id, state, data, last_activity)
@@ -422,6 +417,7 @@ export function clearUserSession(userId: number, chatId: number): void {
   const stmt = db.prepare(`UPDATE user_sessions SET state = 'idle', data = '{}', last_activity = ? WHERE user_id = ? AND chat_id = ?`);
   stmt.run(now, userId, chatId);
 }
+
 // Notification operations
 export function createNotification(notification: Omit<Notification, 'id'>): Notification {
   const db = getDb();
