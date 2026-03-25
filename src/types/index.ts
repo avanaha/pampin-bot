@@ -74,7 +74,12 @@ export type BotState =
   | 'waiting_for_timezone'
   | 'waiting_for_repeat'
   | 'editing_reminder'
-  | 'selecting_reminder';
+  | 'selecting_reminder'
+  | 'preview'
+  | 'editing_title'
+  | 'editing_date'
+  | 'editing_time'
+  | 'editing_description';
 
 export interface UserSession {
   user_id: number;
