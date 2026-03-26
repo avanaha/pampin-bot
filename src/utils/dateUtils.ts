@@ -300,6 +300,8 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
 
 /**
  * Create a date in a specific timezone
+ * FIXED: When hours and minutes are 0 (date-only), don't apply timezone offset
+ * to prevent date shifting (e.g., 05/12/2026 becoming 04/12/2026)
  */
 export function createDateInTimezone(
   year: number, 
@@ -309,6 +311,12 @@ export function createDateInTimezone(
   minutes: number, 
   timezone: string
 ): Date {
+  // If no time specified (date-only), create date directly without timezone shift
+  if (hours === 0 && minutes === 0) {
+    return new Date(year, month, day, 0, 0, 0, 0);
+  }
+  
+  // For datetime with time, apply timezone offset
   const offset = getTimezoneOffset(timezone);
   const utcDate = new Date(Date.UTC(year, month, day, hours - offset, minutes, 0, 0));
   return utcDate;
