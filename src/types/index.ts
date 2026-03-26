@@ -4,8 +4,6 @@
 export type RepeatType = 
   | 'none'           // Не повторять
   | 'daily'          // Ежедневно
-  | 'weekdays'       // По будням (пн-пт)
-  | 'weekends'       // По выходным (сб-вс)
   | 'weekly'         // Еженедельно (в тот же день недели)
   | 'monthly'        // Ежемесячно (в то же число)
   | 'yearly'         // Ежегодно
@@ -19,7 +17,7 @@ export interface Reminder {
   title: string;
   description?: string;
   event_date: string; // ISO date string YYYY-MM-DD
-  event_time?: string; // HH:mm
+  event_time: string; // HH:mm (ОБЯЗАТЕЛЬНО)
   timezone: string;
   reminder_periods: number[]; // periods in milliseconds before event
   repeat_type: RepeatType; // Тип повторения
@@ -30,6 +28,9 @@ export interface Reminder {
   is_active: boolean;
   last_notification?: Date;
   next_notification?: Date;
+  // Множественные напоминания
+  multi_notify_count?: number; // Количество напоминаний (по умолчанию 1)
+  multi_notify_interval?: number; // Интервал между напоминаниями в минутах (по умолчанию 5)
 }
 
 export interface ReminderPeriod {
@@ -58,6 +59,8 @@ export interface Notification {
   status: 'pending' | 'sent' | 'failed';
   period_ms: number;
   error_message?: string;
+  // Для множественных напоминаний
+  notification_index?: number; // Индекс напоминания (0, 1, 2, ...)
 }
 
 // Predefined reminder periods (сколько времени ДО события)
@@ -74,12 +77,10 @@ export const PREDEFINED_PERIODS: { value: number; label: string }[] = [
   { value: 30 * 60 * 1000, label: 'за 30 минут' },
 ];
 
-// Варианты повторения
+// Варианты повторения (БЕЗ weekdays и weekends)
 export const REPEAT_OPTIONS: { value: RepeatType; label: string }[] = [
   { value: 'none', label: 'Не повторять' },
   { value: 'daily', label: 'Ежедневно' },
-  { value: 'weekdays', label: 'По будням (пн-пт)' },
-  { value: 'weekends', label: 'По выходным (сб-вс)' },
   { value: 'weekly', label: 'Еженедельно' },
   { value: 'monthly', label: 'Ежемесячно' },
   { value: 'yearly', label: 'Ежегодно' },
@@ -111,6 +112,8 @@ export type BotState =
   | 'waiting_for_month_day'
   | 'waiting_for_periods'
   | 'waiting_for_timezone'
+  | 'waiting_for_multi_count'
+  | 'waiting_for_multi_interval'
   | 'editing_reminder'
   | 'selecting_reminder'
   | 'preview'
@@ -137,6 +140,8 @@ export interface UserSession {
     temp_repeat_days?: number[];
     temp_month_day?: number;
     temp_timezone?: string;
+    temp_multi_count?: number;
+    temp_multi_interval?: number;
   };
   last_activity: Date;
 }
