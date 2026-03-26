@@ -10,7 +10,9 @@ import {
   addDays,
   addMonths,
   addYears,
-  getDayOfWeek
+  getDayOfWeek,
+  createDateInTimezone,
+  utcToLocalTime
 } from '../utils/dateUtils';
 import { Reminder, Notification, RepeatType } from '../types';
 import { getMaxApi } from '../bot/maxApi';
@@ -76,7 +78,7 @@ export class ReminderScheduler {
     const timezone = reminder.timezone || 'Europe/Moscow';
     const now = getCurrentDateTimeInTimezone(timezone);
     
-    // Parse event date and time
+    // Parse event date and time - ИСПРАВЛЕНО: учитываем часовой пояс
     const eventDateTime = this.parseEventDateTime(reminder, timezone);
     
     if (!eventDateTime) {
@@ -104,11 +106,13 @@ export class ReminderScheduler {
 
   /**
    * Parse event date and time in user's timezone
+   * ИСПРАВЛЕНО: Правильно создаёт datetime с учётом часового пояса пользователя
    */
   private parseEventDateTime(reminder: Reminder, timezone: string): Date | null {
     try {
       const [year, month, day] = reminder.event_date.split('-').map(Number);
       
+      // Время ОБЯЗАТЕЛЬНО
       let hours = 0, minutes = 0;
       if (reminder.event_time) {
         // Support both HH:MM and HH-MM formats
@@ -117,11 +121,13 @@ export class ReminderScheduler {
         minutes = timeParts[1] || 0;
       }
 
-      // Create date in UTC and adjust for timezone
-      const offset = getTimezoneOffset(timezone);
-      const utcDate = new Date(Date.UTC(year, month - 1, day, hours - offset, minutes, 0, 0));
+      // КРИТИЧЕСКИ ВАЖНО: Создаём datetime в часовом поясе пользователя
+      // Используем createDateInTimezone из dateUtils
+      const eventDateTime = createDateInTimezone(year, month - 1, day, hours, minutes, timezone);
       
-      return utcDate;
+      console.log(`[PARSE_DATETIME] ${reminder.event_date} ${reminder.event_time} (${timezone}) -> ${eventDateTime.toISOString()}`);
+      
+      return eventDateTime;
     } catch (error) {
       console.error('Error parsing date:', error);
       return null;
@@ -229,7 +235,7 @@ export class ReminderScheduler {
   }
 
   /**
-   * Send notification
+   * Send notification - ИСПРАВЛЕНО: показывает реальное время уведомления
    */
   private async sendNotification(
     api: ReturnType<typeof getMaxApi>,
@@ -240,11 +246,19 @@ export class ReminderScheduler {
     const eventDateTime = this.parseEventDateTime(reminder, timezone);
     const periodLabel = formatPeriod(notification.period_ms);
     
+    // Вычисляем время события в локальном времени пользователя
+    let eventTimeStr = reminder.event_date;
+    if (eventDateTime) {
+      const localEvent = utcToLocalTime(eventDateTime, timezone);
+      const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+      eventTimeStr = `${localEvent.day} ${monthNames[localEvent.month]} ${localEvent.year} в ${localEvent.hours.toString().padStart(2,'0')}:${localEvent.minutes.toString().padStart(2,'0')}`;
+    }
+    
     const text = `
 🔔 *НАПОМИНАНИЕ!*
 
 📌 *${reminder.title}*
-📅 ${eventDateTime ? formatDate(eventDateTime, 'full') : reminder.event_date}
+📅 ${eventTimeStr}
  ${reminder.description ? `\n📝 ${reminder.description}` : ''}
 
 ⏰ Напоминаю *${periodLabel}*
@@ -283,14 +297,6 @@ export class ReminderScheduler {
     switch (reminder.repeat_type) {
       case 'daily':
         nextDate = this.getNextDailyRepeat(eventDateTime, now);
-        break;
-      
-      case 'weekdays':
-        nextDate = this.getNextWeekdayRepeat(eventDateTime, now);
-        break;
-      
-      case 'weekends':
-        nextDate = this.getNextWeekendRepeat(eventDateTime, now);
         break;
       
       case 'weekly':
@@ -338,30 +344,6 @@ export class ReminderScheduler {
     const next = new Date(eventDate);
     // Add days until we're in the future
     while (next <= now) {
-      next.setDate(next.getDate() + 1);
-    }
-    return next;
-  }
-
-  /**
-   * Get next weekday (Mon-Fri) repeat date
-   */
-  private getNextWeekdayRepeat(eventDate: Date, now: Date): Date {
-    const next = new Date(eventDate);
-    // Add days until we're in the future and it's a weekday
-    while (next <= now || getDayOfWeek(next) === 0 || getDayOfWeek(next) === 6) {
-      next.setDate(next.getDate() + 1);
-    }
-    return next;
-  }
-
-  /**
-   * Get next weekend (Sat-Sun) repeat date
-   */
-  private getNextWeekendRepeat(eventDate: Date, now: Date): Date {
-    const next = new Date(eventDate);
-    // Add days until we're in the future and it's a weekend
-    while (next <= now || (getDayOfWeek(next) >= 1 && getDayOfWeek(next) <= 5)) {
       next.setDate(next.getDate() + 1);
     }
     return next;
