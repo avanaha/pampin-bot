@@ -23,6 +23,7 @@ import {
   formatTime,
   formatPeriod,
   isDateInPast,
+  isDateTimeInPast,
   SUPPORTED_TIMEZONES,
   toISODateString,
   getCurrentDateTimeInTimezone,
@@ -30,7 +31,10 @@ import {
   getDayOfWeek,
   addDays,
   addMonths,
-  addYears
+  addYears,
+  createDateInTimezone,
+  calculateNotificationTime,
+  utcToLocalTime
 } from '../utils/dateUtils';
 import { Reminder, UserSession, RepeatType, PREDEFINED_PERIODS, REPEAT_OPTIONS, WEEKDAYS } from '../types';
 
@@ -133,6 +137,7 @@ export class PamPinBot {
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
+      [callbackButton('📦 Архив', 'archived_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
 
@@ -455,6 +460,12 @@ export class PamPinBot {
       case 'edit_existing_description':
         await this.startEditExistingDescription(userId, chatId, params[0]);
         break;
+      case 'edit_existing_period':
+        await this.startEditExistingPeriod(userId, chatId, params[0]);
+        break;
+      case 'edit_existing_repeat':
+        await this.startEditExistingRepeat(userId, chatId, params[0]);
+        break;
       case 'main_menu':
         await this.showMainMenu(chatId);
         break;
@@ -462,16 +473,10 @@ export class PamPinBot {
         this.clearSession(userId, chatId);
         await this.showMainMenu(chatId);
         break;
-      case 'skip_time':
-        await this.skipTime(userId, chatId);
-        break;
       case 'skip_description':
         await this.skipDescription(userId, chatId);
         break;
       case 'dismiss':
-        break;
-      case 'force_date':
-        await this.forceDate(userId, chatId, params[0]);
         break;
       case 'test_notification':
         await this.sendTestNotification(userId, chatId, params[0]);
@@ -499,17 +504,20 @@ export class PamPinBot {
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
+      [callbackButton('📦 Архив', 'archived_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
 
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
+  // ГЛАВНОЕ МЕНЮ - с кнопкой Архив
   private async showMainMenu(chatId: number): Promise<void> {
     console.log('[MENU] chatId:', chatId);
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('➕ Добавить напоминание', 'add_reminder')],
       [callbackButton('📋 Мои напоминания', 'list_reminders')],
+      [callbackButton('📦 Архив', 'archived_reminders')],
       [callbackButton('⚙️ Настройки', 'settings')]
     ];
 
@@ -524,7 +532,9 @@ export class PamPinBot {
     this.saveSession(userId, chatId, {
       state: 'waiting_for_title',
       data: {
-        temp_timezone: tz
+        temp_timezone: tz,
+        temp_multi_count: 1,
+        temp_multi_interval: 5
       }
     });
 
@@ -582,17 +592,14 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
       return;
     }
 
+    // Проверяем, что дата не в прошлом (только дата, без времени)
     if (isDateInPast(result.date, tz)) {
       await this.api.sendMessageWithKeyboard(
         chatId,
-        `⚠️ Дата *${this.formatDateForUser(result.date, tz)}* уже прошла.
+        `❌ Дата *${this.formatDateForUser(result.date, tz)}* уже прошла.
 
-Всё равно создать напоминание?`,
-        [
-          [callbackButton('✅ Да, создать', `force_date:${toISODateString(result.date)}`)],
-          [callbackButton('🔄 Ввести другую дату', 'add_reminder')],
-          [callbackButton('❌ Отмена', 'cancel')]
-        ],
+📅 Введите будущую дату:`,
+        [[callbackButton('❌ Отмена', 'cancel')]],
         'markdown'
       );
       return;
@@ -603,21 +610,19 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
       data: { ...session.data, temp_date: toISODateString(result.date) }
     });
 
+    // ВРЕМЯ ОБЯЗАТЕЛЬНО - нет кнопки "Пропустить"
     await this.api.sendMessageWithKeyboard(
       chatId,
       `✅ Дата: *${this.formatDateForUser(result.date, tz)}*
 
 🕐 Введите время события:
-_Формат: ЧЧ-ММ (например: 14-30)_
-Или пропустите, если время не важно:`,
-      [
-        [callbackButton('⏭ Пропустить время', 'skip_time')],
-        [callbackButton('❌ Отмена', 'cancel')]
-      ],
+_Формат: ЧЧ-ММ (например: 14-30)_`,
+      [[callbackButton('❌ Отмена', 'cancel')]],
       'markdown'
     );
   }
 
+  // ВРЕМЯ ОБЯЗАТЕЛЬНО - убрана возможность пропуска
   private async handleTimeInput(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
     console.log('[TIME] userId:', userId, 'chatId:', chatId, 'text:', text);
     
@@ -629,13 +634,32 @@ _Формат: ЧЧ-ММ (например: 14-30)_
 
 🕐 Используйте формат: ЧЧ-ММ
 _Например: 14-30 или 09-00_`,
-        [
-          [callbackButton('⏭ Пропустить время', 'skip_time')],
-          [callbackButton('❌ Отмена', 'cancel')]
-        ],
+        [[callbackButton('❌ Отмена', 'cancel')]],
         'markdown'
       );
       return;
+    }
+
+    // Проверяем, что дата-время не в прошлом
+    const tz = session.data?.temp_timezone || 'Europe/Moscow';
+    const dateStr = session.data?.temp_date;
+    if (dateStr) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const eventDate = new Date(year, month - 1, day);
+      const timeStr = formatTime(time.hours, time.minutes);
+      
+      if (isDateTimeInPast(eventDate, timeStr, tz)) {
+        const now = getCurrentDateTimeInTimezone(tz);
+        await this.api.sendMessageWithKeyboard(
+          chatId,
+          `❌ Время *${timeStr}* уже прошло (сейчас ${now.getHours().toString().padStart(2,'0')}-${now.getMinutes().toString().padStart(2,'0')}).
+
+🕐 Введите будущее время:`,
+          [[callbackButton('❌ Отмена', 'cancel')]],
+          'markdown'
+        );
+        return;
+      }
     }
 
     this.saveSession(userId, chatId, {
@@ -669,28 +693,6 @@ _Например: Купить торт и подарки_
     await this.showPeriodMenu(userId, chatId);
   }
 
-  private async skipTime(userId: number, chatId: number): Promise<void> {
-    console.log('[SKIP_TIME] userId:', userId, 'chatId:', chatId);
-    const session = this.getSession(userId, chatId);
-    
-    this.saveSession(userId, chatId, {
-      state: 'waiting_for_description',
-      data: { ...session.data, temp_time: undefined }
-    });
-
-    await this.api.sendMessageWithKeyboard(
-      chatId,
-      `📝 Введите описание (о чём напомнить):
-_Например: Купить торт и подарки_
-Или пропустите, если описание не нужно:`,
-      [
-        [callbackButton('⏭ Пропустить описание', 'skip_description')],
-        [callbackButton('❌ Отмена', 'cancel')]
-      ],
-      'markdown'
-    );
-  }
-
   private async skipDescription(userId: number, chatId: number): Promise<void> {
     console.log('[SKIP_DESC] userId:', userId, 'chatId:', chatId);
     const session = this.getSession(userId, chatId);
@@ -701,33 +703,6 @@ _Например: Купить торт и подарки_
     });
 
     await this.showPeriodMenu(userId, chatId);
-  }
-
-  private async forceDate(userId: number, chatId: number, dateStr: string): Promise<void> {
-    console.log('[FORCE_DATE] userId:', userId, 'chatId:', chatId, 'date:', dateStr);
-    const session = this.getSession(userId, chatId);
-    
-    this.saveSession(userId, chatId, {
-      state: 'waiting_for_time',
-      data: { ...session.data, temp_date: dateStr }
-    });
-
-    const tz = session.data?.temp_timezone || 'Europe/Moscow';
-    const date = this.parseISODate(dateStr, tz);
-    
-    await this.api.sendMessageWithKeyboard(
-      chatId,
-      `✅ Дата: *${this.formatDateForUser(date, tz)}* (прошедшая)
-
-🕐 Введите время события:
-_Формат: ЧЧ-ММ (например: 14-30)_
-Или пропустите, если время не важно:`,
-      [
-        [callbackButton('⏭ Пропустить время', 'skip_time')],
-        [callbackButton('❌ Отмена', 'cancel')]
-      ],
-      'markdown'
-    );
   }
 
   // ==================== PERIOD MENU ====================
@@ -944,7 +919,7 @@ _Формат: ЧЧ-ММ (например: 14-30)_
       }
     }
     
-    if (!data || !data.temp_title) {
+    if (!data || !data.temp_title || !data.temp_date || !data.temp_time) {
       console.log('[PREVIEW] No data!');
       await this.api.sendText(chatId, '❌ Ошибка: данные потеряны. Попробуйте заново.');
       return;
@@ -956,13 +931,13 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     const periodLabel = formatPeriod(period);
     const repeatLabel = this.getRepeatLabel(data.temp_repeat_type || 'none', data.temp_repeat_days, data.temp_month_day);
 
-    // Calculate notification time for display
-    const notificationTime = this.calculateNotificationTimeDisplay(date, period, tz);
+    // Рассчитываем время уведомления с учётом часового пояса
+    const notificationTime = this.calculateNotificationTimeDisplay(data.temp_date, data.temp_time, period, tz);
 
     const text = `📋 *${isEditing ? 'Проверка изменений' : 'Проверка напоминания'}*
 
 📌 *Название:* ${data.temp_title}
-📅 *Дата:* ${this.formatDateForUser(date, tz)}${data.temp_time ? ` в ${data.temp_time}` : ' (без времени)'}
+📅 *Дата:* ${this.formatDateForUser(date, tz)} в ${data.temp_time}
 📝 *Описание:* ${data.temp_description || 'нет'}
 🔔 *Напомнить:* ${periodLabel}
 ⏱ *Время уведомления:* ${notificationTime}
@@ -984,16 +959,27 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  private calculateNotificationTimeDisplay(eventDate: Date, periodMs: number, timezone: string): string {
-    const notificationTime = new Date(eventDate.getTime() - periodMs);
+  // ИСПРАВЛЕННЫЙ расчёт времени уведомления
+  private calculateNotificationTimeDisplay(dateStr: string, timeStr: string, periodMs: number, timezone: string): string {
+    // Парсим дату и время
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const timeParts = timeStr.split(/[:-]/).map(Number);
+    const hours = timeParts[0] || 0;
+    const minutes = timeParts[1] || 0;
+    
+    // Создаём datetime события в UTC (с учётом часового пояса)
+    const eventDateTime = createDateInTimezone(year, month - 1, day, hours, minutes, timezone);
+    
+    // Вычитаем период
+    const notificationTime = new Date(eventDateTime.getTime() - periodMs);
+    
+    // Конвертируем обратно в локальное время пользователя
+    const localTime = utcToLocalTime(notificationTime, timezone);
+    
     const now = getCurrentDateTimeInTimezone(timezone);
     const diffMs = notificationTime.getTime() - now.getTime();
     
-    const day = notificationTime.getDate();
     const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-    const month = monthNames[notificationTime.getMonth()];
-    const hours = notificationTime.getHours().toString().padStart(2, '0');
-    const minutes = notificationTime.getMinutes().toString().padStart(2, '0');
     
     let relative = '';
     if (diffMs < 0) {
@@ -1012,7 +998,7 @@ _Формат: ЧЧ-ММ (например: 14-30)_
       }
     }
     
-    return `${day} ${month} в ${hours}:${minutes}${relative}`;
+    return `${localTime.day} ${monthNames[localTime.month]} в ${localTime.hours.toString().padStart(2, '0')}:${localTime.minutes.toString().padStart(2, '0')}${relative}`;
   }
 
   private pluralizeRu(n: number, one: string, few: string, many: string): string {
@@ -1028,8 +1014,6 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     switch (repeatType) {
       case 'none': return 'не повторять';
       case 'daily': return 'ежедневно';
-      case 'weekdays': return 'по будням (пн-пт)';
-      case 'weekends': return 'по выходным (сб-вс)';
       case 'weekly': return 'еженедельно';
       case 'monthly': return 'ежемесячно';
       case 'yearly': return 'ежегодно';
@@ -1138,6 +1122,17 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
       );
       return;
     }
+
+    // Проверяем, что дата не в прошлом
+    if (isDateInPast(result.date, tz)) {
+      await this.api.sendMessageWithKeyboard(
+        chatId,
+        `❌ Дата уже прошла. Введите будущую дату:`,
+        [[callbackButton('◀️ Назад', 'edit_reminder')]],
+        'markdown'
+      );
+      return;
+    }
     
     const updatedSession = this.saveSession(userId, chatId, {
       state: 'preview',
@@ -1158,27 +1153,31 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
       chatId,
       `🕐 Введите новое время:
 _Текущее: ${currentTime}_
-_Формат: ЧЧ-ММ (например: 14-30)_
-Или "нет" чтобы убрать время:`,
+_Формат: ЧЧ-ММ (например: 14-30)_`,
       [[callbackButton('◀️ Назад', 'edit_reminder')]],
       'markdown'
     );
   }
 
   private async handleEditTime(userId: number, chatId: number, text: string, session: UserSession): Promise<void> {
-    if (text.toLowerCase() === 'нет' || text.toLowerCase() === 'без времени') {
-      const updatedSession = this.saveSession(userId, chatId, {
-        state: 'preview',
-        data: { ...session.data, temp_time: undefined }
-      });
-      await this.showPreview(userId, chatId, updatedSession.data);
-      return;
-    }
-    
     const time = parseTime(text);
     if (!time) {
       await this.api.sendText(chatId, '❌ Не удалось распознать время. Формат: ЧЧ-ММ (например: 14-30)');
       return;
+    }
+    
+    // Проверяем, что время не в прошлом
+    const tz = session.data?.temp_timezone || 'Europe/Moscow';
+    const dateStr = session.data?.temp_date;
+    if (dateStr) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const eventDate = new Date(year, month - 1, day);
+      const timeStr = formatTime(time.hours, time.minutes);
+      
+      if (isDateTimeInPast(eventDate, timeStr, tz)) {
+        await this.api.sendText(chatId, '❌ Это время уже прошло. Введите будущее время:');
+        return;
+      }
     }
     
     const updatedSession = this.saveSession(userId, chatId, {
@@ -1245,7 +1244,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 
     console.log('[SAVE] data:', JSON.stringify(data));
 
-    if (!data?.temp_title || !data?.temp_date) {
+    if (!data?.temp_title || !data?.temp_date || !data?.temp_time) {
       console.log('[SAVE] Missing data');
       await this.api.sendText(chatId, '❌ Ошибка: недостаточно данных.');
       return;
@@ -1264,6 +1263,8 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
         repeat_type: data.temp_repeat_type || 'none',
         repeat_days: data.temp_repeat_days,
         repeat_month_day: data.temp_month_day,
+        multi_notify_count: data.temp_multi_count || 1,
+        multi_notify_interval: data.temp_multi_interval || 5,
         is_active: true
       });
 
@@ -1274,14 +1275,14 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
       const tz = data.temp_timezone || 'Europe/Moscow';
       const eventDate = this.parseISODate(reminder.event_date, tz);
       const period = reminder.reminder_periods[0];
-      const notificationTime = this.calculateNotificationTimeDisplay(eventDate, period, tz);
+      const notificationTime = this.calculateNotificationTimeDisplay(reminder.event_date, reminder.event_time, period, tz);
       const periodLabel = formatPeriod(period);
       const repeatLabel = this.getRepeatLabel(reminder.repeat_type, reminder.repeat_days, reminder.repeat_month_day);
 
       const text = `✅ *Напоминание создано!*
 
 📌 *${reminder.title}*
-📅 Дата: ${this.formatDateForUser(eventDate, tz)}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
+📅 Дата: ${this.formatDateForUser(eventDate, tz)} в ${reminder.event_time}
 📝 Описание: ${reminder.description || 'нет'}
 🔔 Напомнить: ${periodLabel}
 ⏱ Время уведомления: ${notificationTime}
@@ -1328,7 +1329,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     let text = '📋 *Ваши напоминания:*\n\n';
     reminders.slice(0, 10).forEach((r, i) => {
       const d = this.parseISODate(r.event_date, tz);
-      text += `${i + 1}. ${r.title}\n   📅 ${this.formatDateForUser(d, tz)}${r.event_time ? ` в ${r.event_time}` : ''}\n\n`;
+      text += `${i + 1}. ${r.title}\n   📅 ${this.formatDateForUser(d, tz)} в ${r.event_time}\n\n`;
     });
 
     const buttons: InlineKeyboardButton[][] = reminders.slice(0, 5).map(r => [
@@ -1389,11 +1390,10 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 
     // Calculate notification time
     const period = r.reminder_periods?.[0] || 86400000;
-    const notificationTime = this.calculateNotificationTimeDisplay(d, period, tz);
+    const notificationTime = this.calculateNotificationTimeDisplay(r.event_date, r.event_time || '09-00', period, tz);
     
     // Status text
     let statusText = r.is_active ? '✅ Активно' : '📁 В архиве';
-    if (!r.is_active) statusText = '📁 В архиве';
     
     // Created date
     const createdDate = r.created_at ? new Date(r.created_at) : null;
@@ -1403,7 +1403,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 
     const text = `📌 *${r.title}*
 
-📅 *Дата:* ${this.formatDateForUser(d, tz)}${r.event_time ? ` в ${r.event_time}` : ''}
+📅 *Дата:* ${this.formatDateForUser(d, tz)} в ${r.event_time}
 📝 *Описание:* ${r.description || 'нет'}
 🔔 *Напомнить:* ${periodLabel}
 ⏱ *Время уведомления:* ${notificationTime}
@@ -1529,7 +1529,7 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     }
   }
 
-  // ==================== EDIT EXISTING REMINDER ====================
+  // ==================== EDIT EXISTING REMINDER - РАСШИРЕННОЕ МЕНЮ ====================
 
   private async showEditExistingMenu(userId: number, chatId: number, id: string): Promise<void> {
     console.log('[EDIT_EXISTING_MENU] id:', id);
@@ -1543,12 +1543,16 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
 
 📌 *${r.title}*`;
 
+    // РАСШИРЕННОЕ МЕНЮ с Периодом и Повтором
     const buttons: InlineKeyboardButton[][] = [
       [callbackButton('📝 Название', `edit_existing_title:${id}`)],
       [callbackButton('📅 Дату', `edit_existing_date:${id}`)],
       [callbackButton('🕐 Время', `edit_existing_time:${id}`)],
       [callbackButton('📝 Описание', `edit_existing_description:${id}`)],
-      [callbackButton('◀️ Назад', `view_reminder:${id}`)]
+      [callbackButton('🔔 Период', `edit_existing_period:${id}`)],
+      [callbackButton('🔄 Повтор', `edit_existing_repeat:${id}`)],
+      [callbackButton('✅ Готово', `view_reminder:${id}`)],
+      [callbackButton('❌ Отмена', `view_reminder:${id}`)]
     ];
 
     await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
@@ -1559,7 +1563,6 @@ _Текущее: ${session.data?.temp_description || 'нет'}_
     const r = getReminderById(id);
     if (!r) return;
 
-    // Load all reminder data into session for editing
     this.saveSession(userId, chatId, {
       state: 'editing_title',
       data: { 
@@ -1590,7 +1593,6 @@ _Текущее: ${r.title}_`,
     const r = getReminderById(id);
     if (!r) return;
 
-    // Load all reminder data into session for editing
     this.saveSession(userId, chatId, {
       state: 'editing_date',
       data: { 
@@ -1624,7 +1626,6 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
     const r = getReminderById(id);
     if (!r) return;
 
-    // Load all reminder data into session for editing
     this.saveSession(userId, chatId, {
       state: 'editing_time',
       data: { 
@@ -1646,8 +1647,7 @@ _Формат: ДД/ММ/ГГГГ (например: ${today})_`,
       chatId,
       `🕐 Введите новое время:
 _Текущее: ${currentTime}_
-_Формат: ЧЧ-ММ (например: 14-30)_
-Или "нет" чтобы убрать время:`,
+_Формат: ЧЧ-ММ (например: 14-30)_`,
       [[callbackButton('◀️ Назад', `edit_existing_reminder:${id}`)]],
       'markdown'
     );
@@ -1658,7 +1658,6 @@ _Формат: ЧЧ-ММ (например: 14-30)_
     const r = getReminderById(id);
     if (!r) return;
 
-    // Load all reminder data into session for editing
     this.saveSession(userId, chatId, {
       state: 'editing_description',
       data: { 
@@ -1685,6 +1684,55 @@ _Текущее: ${r.description || 'нет'}_
     );
   }
 
+  // НОВЫЕ МЕТОДЫ для редактирования периода и повтора существующего напоминания
+  private async startEditExistingPeriod(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_PERIOD] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_period',
+      data: { 
+        editing_reminder_id: id,
+        temp_title: r.title,
+        temp_description: r.description,
+        temp_date: r.event_date,
+        temp_time: r.event_time,
+        temp_timezone: r.timezone,
+        temp_period: r.reminder_periods?.[0],
+        temp_repeat_type: r.repeat_type,
+        temp_repeat_days: r.repeat_days,
+        temp_month_day: r.repeat_month_day
+      }
+    });
+
+    await this.showPeriodMenu(userId, chatId);
+  }
+
+  private async startEditExistingRepeat(userId: number, chatId: number, id: string): Promise<void> {
+    console.log('[EDIT_EXISTING_REPEAT] id:', id);
+    const r = getReminderById(id);
+    if (!r) return;
+
+    this.saveSession(userId, chatId, {
+      state: 'waiting_for_repeat',
+      data: { 
+        editing_reminder_id: id,
+        temp_title: r.title,
+        temp_description: r.description,
+        temp_date: r.event_date,
+        temp_time: r.event_time,
+        temp_timezone: r.timezone,
+        temp_period: r.reminder_periods?.[0],
+        temp_repeat_type: r.repeat_type,
+        temp_repeat_days: r.repeat_days,
+        temp_month_day: r.repeat_month_day
+      }
+    });
+
+    await this.showRepeatMenu(userId, chatId);
+  }
+
   // ==================== SETTINGS ====================
 
   private async showSettings(userId: number, chatId: number): Promise<void> {
@@ -1698,11 +1746,11 @@ _Текущее: ${r.description || 'нет'}_
 
     const text = `⚙️ *Настройки*
 
-🌐 *Часовой пояс:* ${tzInfo?.label || tz}
+🌍 *Часовой пояс:* ${tzInfo?.label || tz}
 🕐 *Текущее время:* ${time}`;
 
     const buttons: InlineKeyboardButton[][] = [
-      [callbackButton('🌐 Изменить пояс', 'change_timezone')],
+      [callbackButton('🌍 Изменить часовой пояс', 'change_timezone')],
       [callbackButton('🏠 Меню', 'main_menu')]
     ];
 
@@ -1710,41 +1758,34 @@ _Текущее: ${r.description || 'нет'}_
   }
 
   private async showTimezoneMenu(chatId: number): Promise<void> {
-    const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map(tz => [
+    console.log('[TIMEZONE_MENU] chatId:', chatId);
+    
+    const text = `🌍 *Выберите часовой пояс:*`;
+
+    const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map((tz) => [
       callbackButton(tz.label, `set_timezone:${tz.value}`)
     ]);
     buttons.push([callbackButton('◀️ Назад', 'settings')]);
 
-    await this.api.sendMessageWithKeyboard(chatId, '🌐 *Выберите часовой пояс:*', buttons, 'markdown');
+    await this.api.sendMessageWithKeyboard(chatId, text, buttons, 'markdown');
   }
 
-  private async doSetTimezone(userId: number, chatId: number, tz: string): Promise<void> {
-    upsertUserSettings({ user_id: userId, chat_id: chatId, timezone: tz });
-    await this.showSettings(userId, chatId);
-  }
+  private async doSetTimezone(userId: number, chatId: number, timezone: string): Promise<void> {
+    console.log('[SET_TIMEZONE] userId:', userId, 'chatId:', chatId, 'tz:', timezone);
+    
+    upsertUserSettings(userId, chatId, { timezone });
 
-  // ==================== HELP ====================
-
-  private async showHelp(chatId: number): Promise<void> {
-    const text = `📚 *Справка*
-
-*Команды:*
-/start — главное меню
-/list — мои напоминания
-/settings — настройки
-
-*Форматы ввода:*
-• Дата: ДД/ММ/ГГГГ (например: 01/04/2026)
-• Время: ЧЧ-ММ (например: 14-30)
-
-*О боте:*
-PamPin — ваш календарь важных дат.
-Я напомню о событии за нужное время!`;
+    const tzInfo = SUPPORTED_TIMEZONES.find(t => t.value === timezone);
+    const now = getCurrentDateTimeInTimezone(timezone);
+    const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
     await this.api.sendMessageWithKeyboard(
       chatId,
-      text,
-      [[callbackButton('🏠 Меню', 'main_menu')]],
+      `✅ *Часовой пояс изменен*
+
+🌍 ${tzInfo?.label || timezone}
+🕐 Текущее время: ${time}`,
+      [[callbackButton('⚙️ Настройки', 'settings')]],
       'markdown'
     );
   }
@@ -1752,26 +1793,33 @@ PamPin — ваш календарь важных дат.
   // ==================== TEST NOTIFICATION ====================
 
   private async sendTestNotification(userId: number, chatId: number, id: string): Promise<void> {
-    console.log('[TEST_NOTIFICATION] id:', id);
+    console.log('[TEST_NOTIF] id:', id);
     const r = getReminderById(id);
     if (!r) {
       await this.api.sendText(chatId, '❌ Напоминание не найдено.');
       return;
     }
 
-    // Send test notification
-    const text = `🔔 *ТЕСТОВОЕ УВЕДОМЛЕНИЕ*
+    const tz = r.timezone || 'Europe/Moscow';
+    const period = r.reminder_periods?.[0] || 86400000;
+    const periodLabel = formatPeriod(period);
+    
+    // Рассчитываем реальное время уведомления
+    const notificationTime = this.calculateNotificationTimeDisplay(r.event_date, r.event_time || '09-00', period, tz);
 
-📌 ${r.title}
-${r.description ? `📝 ${r.description}\n` : ''}
-⏰ Это тестовое уведомление. Если вы его получили — уведомления работают!`;
+    // Отправляем тестовое уведомление
+    const text = `
+🔔 *ТЕСТОВОЕ УВЕДОМЛЕНИЕ*
 
-    await this.api.sendMessageWithKeyboard(
-      chatId,
-      text,
-      [[callbackButton('◀️ Назад', `view_reminder:${id}`)]],
-      'markdown'
-    );
+📌 *${r.title}*
+📅 ${r.event_date} в ${r.event_time}
+ ${r.description ? `\n📝 ${r.description}` : ''}
+
+⏰ Напоминаю *${periodLabel}*
+📬 Реальное уведомление придёт: ${notificationTime}
+`;
+
+    await this.api.sendText(chatId, text, 'markdown');
   }
 
   // ==================== SAVE EDITED REMINDER ====================
@@ -1781,8 +1829,12 @@ ${r.description ? `📝 ${r.description}\n` : ''}
     const session = this.getSession(userId, chatId);
     const data = session.data;
 
-    if (!data?.editing_reminder_id || !data?.temp_title || !data?.temp_date) {
-      console.log('[SAVE_EDIT] Missing data');
+    if (!data?.editing_reminder_id) {
+      await this.api.sendText(chatId, '❌ Ошибка: ID напоминания потерян.');
+      return;
+    }
+
+    if (!data?.temp_title || !data?.temp_date || !data?.temp_time) {
       await this.api.sendText(chatId, '❌ Ошибка: недостаточно данных.');
       return;
     }
@@ -1800,32 +1852,22 @@ ${r.description ? `📝 ${r.description}\n` : ''}
         repeat_month_day: data.temp_month_day
       });
 
-      console.log('[SAVE_EDIT] Updated:', data.editing_reminder_id);
-      
       this.clearSession(userId, chatId);
 
       const tz = data.temp_timezone || 'Europe/Moscow';
-      const eventDate = this.parseISODate(data.temp_date, tz);
       const period = data.temp_period || 86400000;
-      const notificationTime = this.calculateNotificationTimeDisplay(eventDate, period, tz);
-      const periodLabel = formatPeriod(period);
-      const repeatLabel = this.getRepeatLabel(data.temp_repeat_type || 'none', data.temp_repeat_days, data.temp_month_day);
-
-      const text = `✅ *Напоминание обновлено!*
-
-📌 *${data.temp_title}*
-📅 Дата: ${this.formatDateForUser(eventDate, tz)}${data.temp_time ? ` в ${data.temp_time}` : ''}
-📝 Описание: ${data.temp_description || 'нет'}
-🔔 Напомнить: ${periodLabel}
-⏱ Время уведомления: ${notificationTime}
-🔄 Повтор: ${repeatLabel}`;
+      const notificationTime = this.calculateNotificationTimeDisplay(data.temp_date, data.temp_time, period, tz);
 
       await this.api.sendMessageWithKeyboard(
         chatId,
-        text,
+        `✅ *Напоминание обновлено!*
+
+📌 ${data.temp_title}
+📅 ${data.temp_date} в ${data.temp_time}
+🔔 Напоминание придёт: ${notificationTime}`,
         [
           [callbackButton('📋 Мои напоминания', 'list_reminders')],
-          [callbackButton('🏠 Главное меню', 'main_menu')]
+          [callbackButton('🏠 Меню', 'main_menu')]
         ],
         'markdown'
       );
@@ -1835,54 +1877,59 @@ ${r.description ? `📝 ${r.description}\n` : ''}
     }
   }
 
-  // ==================== NOTIFICATIONS ====================
+  // ==================== HELP ====================
 
-  async sendReminderNotification(reminder: Reminder, periodMs: number): Promise<void> {
-    const settings = getUserSettings(reminder.user_id, reminder.chat_id);
-    const tz = settings?.timezone || 'Europe/Moscow';
-    const d = this.parseISODate(reminder.event_date, tz);
-    const label = formatPeriod(periodMs);
+  private async showHelp(chatId: number): Promise<void> {
+    const text = `📖 *Справка по PamPin*
 
-    const text = `🔔 *Напоминание!*
+*Как создать напоминание:*
+1. Нажмите "➕ Добавить напоминание"
+2. Введите название
+3. Введите дату (ДД/ММ/ГГГГ)
+4. Введите время (ЧЧ-ММ) — обязательно!
+5. Добавьте описание или пропустите
+6. Выберите за сколько напомнить
+7. Настройте повторение
 
-📌 ${reminder.title}
-📅 ${this.formatDateForUser(d, tz)}${reminder.event_time ? ` в ${reminder.event_time}` : ''}
-${reminder.description ? `\n📝 ${reminder.description}` : ''}
+*Форматы даты:*
+• 01/04/2026
+• 01.04.2026
+• 1 апреля 2026
 
-⏰ Напоминаю ${label}`;
+*Форматы времени:*
+• 14-30
+• 14:30
+• 09-00
+
+*Повторение:*
+• Ежедневно / Еженедельно / Ежемесячно / Ежегодно
+• Выбранные дни недели
+• Каждого N-го числа месяца`;
 
     await this.api.sendMessageWithKeyboard(
-      reminder.chat_id,
+      chatId,
       text,
-      [[callbackButton('✅ Понял', 'dismiss')]],
+      [[callbackButton('🏠 Меню', 'main_menu')]],
       'markdown'
     );
   }
 
-  // ==================== HELPER METHODS ====================
+  // ==================== UTILITY METHODS ====================
 
-  private getTodayString(timezone: string): string {
-    const now = getCurrentDateTimeInTimezone(timezone);
-    const day = now.getDate().toString().padStart(2, '0');
-    const month = (now.getMonth() + 1).toString().padStart(2, '0');
-    const year = now.getFullYear();
-    return `${day}/${month}/${year}`;
+  private parseISODate(dateStr: string, timezone: string): Date {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
   }
 
   private formatDateForUser(date: Date, timezone: string): string {
-    const months = [
-      'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
-    ];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const year = date.getFullYear();
-    return `${day} ${month} ${year}`;
+    return formatDate(date, 'long');
   }
 
-  private parseISODate(isoString: string, timezone: string): Date {
-    const [year, month, day] = isoString.split('-').map(Number);
-    const offset = getTimezoneOffset(timezone);
-    return new Date(Date.UTC(year, month - 1, day, offset, 0, 0));
+  private getTodayString(timezone: string): string {
+    const today = getCurrentDateTimeInTimezone(timezone);
+    const day = today.getDate().toString().padStart(2, '0');
+    const month = (today.getMonth() + 1).toString().padStart(2, '0');
+    const year = today.getFullYear();
+    return `${day}/${month}/${year}`;
   }
 }
