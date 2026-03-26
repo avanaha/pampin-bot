@@ -43,11 +43,13 @@ export function getCurrentDateInTimezone(timezone: string): Date {
 
 /**
  * Get current datetime in timezone
+ * ВАЖНО: Возвращает локальное время пользователя в его часовом поясе
  */
 export function getCurrentDateTimeInTimezone(timezone: string): Date {
   const now = new Date();
   const offset = getTimezoneOffset(timezone);
   
+  // Получаем UTC время и добавляем смещение часового пояса
   const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
   const tzTime = utcTime + (offset * 3600000);
   
@@ -300,8 +302,7 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
 
 /**
  * Create a date in a specific timezone
- * FIXED: When hours and minutes are 0 (date-only), don't apply timezone offset
- * to prevent date shifting (e.g., 05/12/2026 becoming 04/12/2026)
+ * КРИТИЧЕСКИ ВАЖНО: Правильно создаёт дату-время в часовом поясе пользователя
  */
 export function createDateInTimezone(
   year: number, 
@@ -311,14 +312,15 @@ export function createDateInTimezone(
   minutes: number, 
   timezone: string
 ): Date {
-  // If no time specified (date-only), create date directly without timezone shift
-  if (hours === 0 && minutes === 0) {
-    return new Date(year, month, day, 0, 0, 0, 0);
-  }
-  
-  // For datetime with time, apply timezone offset
   const offset = getTimezoneOffset(timezone);
-  const utcDate = new Date(Date.UTC(year, month, day, hours - offset, minutes, 0, 0));
+  
+  // Создаём UTC дату, вычитая смещение часового пояса
+  // Например, для Москвы (UTC+3) время 14:00 должно храниться как 11:00 UTC
+  const utcHours = hours - offset;
+  const utcDate = new Date(Date.UTC(year, month, day, utcHours, minutes, 0, 0));
+  
+  console.log(`[DATE_CREATE] ${year}-${month+1}-${day} ${hours}:${minutes} (${timezone}, offset=${offset}) -> UTC: ${utcDate.toISOString()}`);
+  
   return utcDate;
 }
 
@@ -358,7 +360,32 @@ export function isValidDate(date: Date): boolean {
 }
 
 /**
- * Check if date is in the past
+ * Check if date is in the past (с учётом времени)
+ * ВАЖНО: Сравниваем полную дату-время, а не только дату
+ */
+export function isDateTimeInPast(date: Date, time: string, timezone: string): boolean {
+  const now = getCurrentDateTimeInTimezone(timezone);
+  
+  // Парсим время
+  const timeParts = time.split(/[:-]/).map(Number);
+  const hours = timeParts[0] || 0;
+  const minutes = timeParts[1] || 0;
+  
+  // Создаём полную дату-время события в часовом поясе пользователя
+  const eventDateTime = createDateInTimezone(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    hours,
+    minutes,
+    timezone
+  );
+  
+  return eventDateTime.getTime() < now.getTime();
+}
+
+/**
+ * Check if date is in the past (только дата, без времени)
  */
 export function isDateInPast(date: Date, timezone: string = 'Europe/Moscow'): boolean {
   const now = getCurrentDateTimeInTimezone(timezone);
@@ -496,9 +523,33 @@ export function pluralize(n: number, one: string, few: string, many: string): st
 
 /**
  * Calculate next notification time
+ * ВАЖНО: eventDate должен быть в UTC, periodMs - период в миллисекундах
+ * Возвращает время уведомления в UTC
  */
 export function calculateNextNotification(eventDate: Date, periodMs: number, timezone: string): Date {
+  // Вычитаем период из времени события
   const notificationTime = new Date(eventDate.getTime() - periodMs);
+  console.log(`[CALC_NEXT_NOTIF] event: ${eventDate.toISOString()}, period: ${periodMs}ms, notification: ${notificationTime.toISOString()}`);
+  return notificationTime;
+}
+
+/**
+ * Рассчитать время уведомления с учётом часового пояса
+ * Принимает локальные компоненты даты/времени пользователя
+ */
+export function calculateNotificationTime(
+  year: number, month: number, day: number,
+  hours: number, minutes: number,
+  periodMs: number,
+  timezone: string
+): Date {
+  // Создаём datetime события в UTC (с учётом часового пояса)
+  const eventDateTime = createDateInTimezone(year, month, day, hours, minutes, timezone);
+  // Вычитаем период
+  const notificationTime = new Date(eventDateTime.getTime() - periodMs);
+  
+  console.log(`[CALC_NOTIF_TIME] event: ${eventDateTime.toISOString()}, period: ${formatPeriod(periodMs)}, notification: ${notificationTime.toISOString()}`);
+  
   return notificationTime;
 }
 
@@ -590,4 +641,38 @@ export function addYears(date: Date, years: number): Date {
   const result = new Date(date);
   result.setFullYear(result.getFullYear() + years);
   return result;
+}
+
+/**
+ * Конвертировать UTC дату в локальное время пользователя
+ * Возвращает объект с компонентами даты/времени в часовом поясе пользователя
+ */
+export function utcToLocalTime(utcDate: Date, timezone: string): {
+  year: number;
+  month: number;
+  day: number;
+  hours: number;
+  minutes: number;
+  dayOfWeek: number;
+} {
+  const offset = getTimezoneOffset(timezone);
+  
+  // Получаем UTC компоненты
+  const utcYear = utcDate.getUTCFullYear();
+  const utcMonth = utcDate.getUTCMonth();
+  const utcDay = utcDate.getUTCDate();
+  const utcHours = utcDate.getUTCHours();
+  const utcMinutes = utcDate.getUTCMinutes();
+  
+  // Создаём локальное время, добавляя смещение
+  const localDate = new Date(utcDate.getTime() + offset * 3600000);
+  
+  return {
+    year: localDate.getUTCFullYear(),
+    month: localDate.getUTCMonth(),
+    day: localDate.getUTCDate(),
+    hours: localDate.getUTCHours(),
+    minutes: localDate.getUTCMinutes(),
+    dayOfWeek: localDate.getUTCDay()
+  };
 }
