@@ -729,7 +729,7 @@ _Например: Купить торт и подарки_
 
     const text = `🔔 *За сколько напомнить?*
 
-${infoText}
+ ${infoText}
 
 Выберите один вариант:`;
 
@@ -779,7 +779,7 @@ ${infoText}
 
     const text = `🔄 *Нужно ли повторять это напоминание?*
 
-${infoText}
+ ${infoText}
 
 Выберите вариант повтора:`;
 
@@ -903,7 +903,7 @@ ${infoText}
   private async showPreview(userId: number, chatId: number): Promise<void> {
     console.log('[PREVIEW] chatId:', chatId);
     const session = this.getSession(userId, chatId);
-    const data = session.data;
+    let data = session.data;  // ИСПРАВЛЕНО: let вместо const
     
     // Check if editing existing reminder
     const isEditing = !!data?.editing_reminder_id;
@@ -1756,7 +1756,7 @@ _Текущее: ${r.description || 'нет'}_
     console.log('[SETTINGS] userId:', userId, 'chatId:', chatId);
     const settings = getUserSettings(userId, chatId);
     const tz = settings?.timezone || 'Europe/Moscow';
-    const tzInfo = SUPPORTED_TIMEZONES.find(t => t.value === tz);
+    const tzInfo = SUPPORTED_TIMEZONES.find((t: { value: string; label: string }) => t.value === tz);
 
     const now = getCurrentDateTimeInTimezone(tz);
     const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
@@ -1779,7 +1779,7 @@ _Текущее: ${r.description || 'нет'}_
     
     const text = `🌍 *Выберите часовой пояс:*`;
 
-    const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map((tz) => [
+    const buttons: InlineKeyboardButton[][] = SUPPORTED_TIMEZONES.map((tz: { value: string; label: string }) => [
       callbackButton(tz.label, `set_timezone:${tz.value}`)
     ]);
     buttons.push([callbackButton('◀️ Назад', 'settings')]);
@@ -1792,7 +1792,7 @@ _Текущее: ${r.description || 'нет'}_
     
     upsertUserSettings({ user_id: userId, chat_id: chatId, timezone });
 
-    const tzInfo = SUPPORTED_TIMEZONES.find(t => t.value === timezone);
+    const tzInfo = SUPPORTED_TIMEZONES.find((t: { value: string; label: string }) => t.value === timezone);
     const now = getCurrentDateTimeInTimezone(timezone);
     const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
