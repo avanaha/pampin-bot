@@ -98,7 +98,7 @@ export function validateDateComponents(day: number, month: number, year: number)
 }
 
 /**
- * Get month name in Russian
+ * Get month name in Russian (для сообщений об ошибках)
  */
 export function getMonthName(month: number): string {
   const months = [
@@ -106,6 +106,25 @@ export function getMonthName(month: number): string {
     'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'
   ];
   return months[month];
+}
+
+/**
+ * Get month name in Russian (именительный падеж)
+ */
+export function getMonthNameNominative(month: number): string {
+  const months = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+  ];
+  return months[month];
+}
+
+/**
+ * Get day of week name in Russian
+ */
+export function getDayOfWeekName(dayOfWeek: number): string {
+  const days = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+  return days[dayOfWeek];
 }
 
 /**
@@ -219,13 +238,15 @@ export function parseDate(input: string, timezone: string = 'Europe/Moscow'): Da
 
 /**
  * Parse date with detailed error message
+ * ИСПРАВЛЕНО: Возвращает dateStr (YYYY-MM-DD) напрямую, а не Date объект
+ * Это предотвращает смещение даты при конвертации в ISO строку
  */
-export function parseDateWithFeedback(input: string, timezone: string = 'Europe/Moscow'): { date: Date | null; error?: string } {
+export function parseDateWithFeedback(input: string, timezone: string = 'Europe/Moscow'): { dateStr: string | null; error?: string } {
   const trimmedInput = input.trim();
   
   if (trimmedInput.length < 6) {
     return { 
-      date: null, 
+      dateStr: null, 
       error: `Слишком короткий ввод. Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026` 
     };
   }
@@ -279,7 +300,7 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
 
   if (!matched) {
     return { 
-      date: null, 
+      dateStr: null, 
       error: `❌ Неверный формат даты.\n\n📅 Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026\n\nВы ввели: ${trimmedInput}` 
     };
   }
@@ -291,13 +312,18 @@ export function parseDateWithFeedback(input: string, timezone: string = 'Europe/
   const validation = validateDateComponents(day, month, year);
   if (!validation.valid) {
     return { 
-      date: null, 
+      dateStr: null, 
       error: `❌ ${validation.error}\n\n📅 Используйте формат: ДД/ММ/ГГГГ\nНапример: 01/04/2026` 
     };
   }
   
-  const date = createDateInTimezone(year, month - 1, day, 0, 0, timezone);
-  return { date };
+  // Формируем строку даты напрямую, без создания Date объекта
+  // Это предотвращает смещение даты из-за часового пояса сервера
+  const dateStr = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+  
+  console.log(`[PARSE_DATE] Input: "${trimmedInput}" -> dateStr: ${dateStr}`);
+  
+  return { dateStr };
 }
 
 /**
@@ -360,26 +386,32 @@ export function isValidDate(date: Date): boolean {
 }
 
 /**
- * Check if date is in the past (с учётом времени)
- * ВАЖНО: Сравниваем полную дату-время, а не только дату
+ * Check if date string (YYYY-MM-DD) is in the past
+ * ИСПРАВЛЕНО: Работает со строкой даты напрямую
  */
-export function isDateTimeInPast(date: Date, time: string, timezone: string): boolean {
+export function isDateStringInPast(dateStr: string, timezone: string): boolean {
+  const now = getCurrentDateTimeInTimezone(timezone);
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const eventDate = new Date(year, month - 1, day);
+  const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return eventDate < nowOnly;
+}
+
+/**
+ * Check if date-time is in the past
+ * ИСПРАВЛЕНО: Принимает строку даты YYYY-MM-DD
+ */
+export function isDateTimeInPast(dateStr: string, time: string, timezone: string): boolean {
   const now = getCurrentDateTimeInTimezone(timezone);
   
-  // Парсим время
+  // Парсим дату и время
+  const [year, month, day] = dateStr.split('-').map(Number);
   const timeParts = time.split(/[:-]/).map(Number);
   const hours = timeParts[0] || 0;
   const minutes = timeParts[1] || 0;
   
   // Создаём полную дату-время события в часовом поясе пользователя
-  const eventDateTime = createDateInTimezone(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-    hours,
-    minutes,
-    timezone
-  );
+  const eventDateTime = createDateInTimezone(year, month - 1, day, hours, minutes, timezone);
   
   return eventDateTime.getTime() < now.getTime();
 }
@@ -405,7 +437,7 @@ export function isToday(date: Date, timezone: string = 'Europe/Moscow'): boolean
 }
 
 /**
- * Format date for display
+ * Format date for display (из Date объекта)
  */
 export function formatDate(date: Date, format: 'short' | 'long' | 'full' = 'short'): string {
   const months = [
@@ -426,6 +458,29 @@ export function formatDate(date: Date, format: 'short' | 'long' | 'full' = 'shor
       const hours = date.getHours().toString().padStart(2, '0');
       const minutes = date.getMinutes().toString().padStart(2, '0');
       return `${day} ${month} ${year} в ${hours}-${minutes}`;
+  }
+}
+
+/**
+ * Format date string (YYYY-MM-DD) for display
+ * ИСПРАВЛЕНО: Форматирует строку даты без создания Date объекта
+ */
+export function formatDateStr(dateStr: string, format: 'short' | 'long' | 'full' = 'long'): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const months = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+  ];
+  const dayOfWeek = new Date(year, month - 1, day).getDay();
+  const dayNames = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+  switch (format) {
+    case 'short':
+      return `${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}/${year}`;
+    case 'long':
+      return `${day} ${months[month - 1]} ${year} (${dayNames[dayOfWeek]})`;
+    case 'full':
+      return `${day} ${months[month - 1]} ${year}`;
   }
 }
 
@@ -535,16 +590,21 @@ export function calculateNextNotification(eventDate: Date, periodMs: number, tim
 
 /**
  * Рассчитать время уведомления с учётом часового пояса
- * Принимает локальные компоненты даты/времени пользователя
+ * Принимает строку даты YYYY-MM-DD
  */
-export function calculateNotificationTime(
-  year: number, month: number, day: number,
-  hours: number, minutes: number,
+export function calculateNotificationTimeFromDateStr(
+  dateStr: string,
+  time: string,
   periodMs: number,
   timezone: string
 ): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const timeParts = time.split(/[:-]/).map(Number);
+  const hours = timeParts[0] || 0;
+  const minutes = timeParts[1] || 0;
+  
   // Создаём datetime события в UTC (с учётом часового пояса)
-  const eventDateTime = createDateInTimezone(year, month, day, hours, minutes, timezone);
+  const eventDateTime = createDateInTimezone(year, month - 1, day, hours, minutes, timezone);
   // Вычитаем период
   const notificationTime = new Date(eventDateTime.getTime() - periodMs);
   
@@ -571,6 +631,7 @@ export function getCurrentTimeInTimezone(timezone: string): Date {
 
 /**
  * Convert date to ISO format (YYYY-MM-DD)
+ * ВАЖНО: Используйте parseDateWithFeedback для получения dateStr напрямую
  */
 export function toISODateString(date: Date): string {
   const year = date.getFullYear();
@@ -595,10 +656,30 @@ export function getTodayFormatted(timezone: string = 'Europe/Moscow'): string {
 }
 
 /**
+ * Get today's date as ISO string (YYYY-MM-DD)
+ * ИСПРАВЛЕНО: Корректно работает с часовым поясом
+ */
+export function getTodayISO(timezone: string = 'Europe/Moscow'): string {
+  const now = getCurrentDateTimeInTimezone(timezone);
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
  */
 export function getDayOfWeek(date: Date): number {
   return date.getDay();
+}
+
+/**
+ * Get day of week from date string (YYYY-MM-DD)
+ */
+export function getDayOfWeekFromStr(dateStr: string): number {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day).getDay();
 }
 
 /**
@@ -656,13 +737,6 @@ export function utcToLocalTime(utcDate: Date, timezone: string): {
   dayOfWeek: number;
 } {
   const offset = getTimezoneOffset(timezone);
-  
-  // Получаем UTC компоненты
-  const utcYear = utcDate.getUTCFullYear();
-  const utcMonth = utcDate.getUTCMonth();
-  const utcDay = utcDate.getUTCDate();
-  const utcHours = utcDate.getUTCHours();
-  const utcMinutes = utcDate.getUTCMinutes();
   
   // Создаём локальное время, добавляя смещение
   const localDate = new Date(utcDate.getTime() + offset * 3600000);
