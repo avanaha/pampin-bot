@@ -712,7 +712,7 @@ _Например: Купить торт и подарки_
   private async showPeriodMenu(userId: number, chatId: number): Promise<void> {
     console.log('[PERIOD_MENU] userId:', userId, 'chatId:', chatId);
     const session = this.getSession(userId, chatId);
-    let data = session.data;
+    const data = session.data;
 
     const title = data?.temp_title || 'Напоминание';
     const tz = data?.temp_timezone || 'Europe/Moscow';
